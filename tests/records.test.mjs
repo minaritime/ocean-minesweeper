@@ -56,3 +56,11 @@ test('시간 표시', () => {
   assert.equal(formatClock(3723), '1:02:03');
   assert.match(formatDate(Date.UTC(2026, 10, 3, 12, 0)), /^2026\.11\.0[34] \d\d:\d\d$/);
 });
+
+test('백분율 표시', async () => {
+  const { formatPercent } = await import('../js/records.js');
+  assert.equal(formatPercent(0.004), '0.4%');
+  assert.equal(formatPercent(0), '0.0%');
+  assert.equal(formatPercent(0.456), '45%');
+  assert.equal(formatPercent(1), '100%');
+});

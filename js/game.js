@@ -174,6 +174,51 @@ export function toggleFlag(board, i) {
   return true;
 }
 
+const CELL_OCEAN = 1;
+const CELL_MINE = 2;
+const CELL_OPEN = 4;
+const CELL_FLAG = 8;
+
+/** 칸마다 상태를 1바이트로 묶는다 (이어하기 저장용) */
+export function packCells(board) {
+  const out = new Uint8Array(board.ocean.length);
+  for (let i = 0; i < out.length; i += 1) {
+    out[i] = (board.ocean[i] ? CELL_OCEAN : 0) | (board.mine[i] ? CELL_MINE : 0)
+      | (board.open[i] ? CELL_OPEN : 0) | (board.flag[i] ? CELL_FLAG : 0);
+  }
+  return out;
+}
+
+/** packCells 로 묶은 칸에서 진행 중인 판을 되살린다 */
+export function unpackBoard(cells, cols, rows) {
+  const size = cols * rows;
+  if (cells.length !== size) throw new Error(`칸 수가 맞지 않습니다: ${cells.length} != ${size}`);
+  const ocean = Uint8Array.from(cells, (v) => (v & CELL_OCEAN ? 1 : 0));
+  const board = createBoard(ocean, cols, rows, 0);
+  let mines = 0;
+  for (let i = 0; i < size; i += 1) {
+    const v = cells[i];
+    if (!(v & CELL_OCEAN)) continue;
+    if (v & CELL_MINE) {
+      board.mine[i] = 1;
+      mines += 1;
+      forEachGridNeighbor(cols, rows, i, (n) => { board.adj[n] += 1; });
+    }
+    if (v & CELL_OPEN) {
+      board.open[i] = 1;
+      board.opened += 1;
+    }
+    if (v & CELL_FLAG) {
+      board.flag[i] = 1;
+      board.flags += 1;
+    }
+  }
+  if (mines === 0) throw new Error('지뢰가 없는 저장 판입니다');
+  board.mineCount = mines;
+  board.state = 'playing';
+  return board;
+}
+
 export function progress(board) {
   const total = safeTotal(board);
   return total > 0 ? board.opened / total : 0;

@@ -2,8 +2,9 @@ import { LEVELS, createBoard, keepLargestOcean, reveal, chord, toggleFlag, progr
 import { decodeLand, makeLayout, buildOceanMask, buildCoastPath, carveStraits } from './geo.js';
 import { draw, createLayer, paintLayer } from './render.js';
 import {
-  normalizeHistory, addPlay, addClear, summarize, rankOf, formatDuration, formatClock, formatDate,
+  normalizeHistory, addPlay, addClear, summarize, rankOf, formatDuration, formatClock, formatDate, formatPercent,
 } from './records.js';
+import { snapshot, restore } from './save.js';
 
 const LONG_PRESS_MS = 380;
 const DRAG_THRESHOLD = 7;
@@ -16,6 +17,9 @@ const BUTTON_ZOOM = 1.5;
 const RESULT_DELAY = { won: 450, lost: 900 };
 const STORE_KEY = 'world-minesweeper-v3';
 const RECORD_LIST_LIMIT = 50;
+const SAVE_KEY = 'world-minesweeper-save';
+const SAVE_DELAY_MS = 800;
+const TOAST_MS = 3200;
 const CONFIRM_RESTART_AFTER_SEC = 60;
 
 const $ = (id) => document.getElementById(id);
@@ -48,6 +52,8 @@ const state = {
   endTime: 0,
   timer: 0,
   resultTimer: 0,
+  saveTimer: 0,
+  pendingResume: null,
   frame: 0,
 };
 
@@ -150,15 +156,9 @@ function save() {
   store.write({ level: state.level, history: state.history });
 }
 
-function newGame(level = state.level) {
-  if (!state.polygons) return;
+function installGame(level, layout, board) {
   state.level = level;
   save();
-  const { cols, density } = LEVELS[level];
-  const layout = makeLayout(cols);
-  const carved = carveStraits(buildOceanMask(state.polygons, layout), layout);
-  const ocean = keepLargestOcean(carved, layout.cols, layout.rows);
-  const board = createBoard(ocean, layout.cols, layout.rows, density);
   const layer = createLayer(board);
   paintLayer(layer, board);
   state.game = { layout, board, layer, coast: buildCoastPath(state.polygons, layout) };
@@ -169,9 +169,101 @@ function newGame(level = state.level) {
   state.hover = -1;
   hideResult();
   hideRecords();
+  hideResume();
+}
+
+function newGame(level = state.level) {
+  if (!state.polygons) return;
+  clearSavedGame();
+  const { cols, density } = LEVELS[level];
+  const layout = makeLayout(cols);
+  const carved = carveStraits(buildOceanMask(state.polygons, layout), layout);
+  const ocean = keepLargestOcean(carved, layout.cols, layout.rows);
+  installGame(level, layout, createBoard(ocean, layout.cols, layout.rows, density));
   fitView();
   updateHud();
 }
+
+/* ---------- 이어하기 저장 ---------- */
+
+function showToast(text) {
+  const el = $('toast');
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(el.hideTimer);
+  el.hideTimer = setTimeout(() => el.classList.remove('show'), TOAST_MS);
+}
+
+function writeSavedGame() {
+  clearTimeout(state.saveTimer);
+  state.saveTimer = 0;
+  const g = state.game;
+  if (!g || g.board.state !== 'playing' || !state.startTime) return;
+  const data = snapshot({
+    level: state.level, layout: g.layout, board: g.board, elapsed: elapsedSeconds(), view: state.view, savedAt: Date.now(),
+  });
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+  } catch (err) {
+    showToast('저장 공간이 부족해 이어하기 저장에 실패했습니다');
+    console.error('save failed', err);
+  }
+}
+
+function scheduleSave() {
+  if (state.saveTimer) return;
+  state.saveTimer = setTimeout(writeSavedGame, SAVE_DELAY_MS);
+}
+
+function clearSavedGame() {
+  clearTimeout(state.saveTimer);
+  state.saveTimer = 0;
+  try { localStorage.removeItem(SAVE_KEY); } catch { /* 저장소를 못 쓰는 환경이면 지울 것도 없다 */ }
+}
+
+function readSavedGame() {
+  try {
+    return restore(JSON.parse(localStorage.getItem(SAVE_KEY)));
+  } catch {
+    return null;
+  }
+}
+
+/** 저장된 판을 멈춘 채로 깔아 두고 고르는 창을 띄운다 */
+function offerResume(saved) {
+  installGame(saved.level, saved.layout, saved.board);
+  state.pendingResume = saved;
+  fitView();
+  if (saved.view) {
+    Object.assign(state.view, saved.view);
+    clampView();
+  }
+  updateHud();
+  $('time').textContent = formatClock(saved.elapsed);
+  requestRender();
+  $('resumeLevel').textContent = LEVELS[saved.level].label;
+  $('resumeTime').textContent = formatDuration(saved.elapsed);
+  $('resumeProgress').textContent = formatPercent(progress(saved.board));
+  $('resumeSaved').textContent = Number.isFinite(saved.savedAt) ? formatDate(saved.savedAt) : '';
+  $('resume').classList.add('show');
+  $('resumeGo').focus();
+}
+
+function resumeGame() {
+  const saved = state.pendingResume;
+  if (!saved) return;
+  state.pendingResume = null;
+  hideResume();
+  state.startTime = performance.now() - saved.elapsed * 1000;
+  state.timer = setInterval(updateHud, 250);
+  updateHud();
+}
+
+function hideResume() {
+  $('resume').classList.remove('show');
+}
+
+const isResumeOpen = () => $('resume').classList.contains('show');
 
 /** 오래 진행한 판을 실수로 버리지 않도록 한 번 묻는다 */
 function requestNewGame(level = state.level) {
@@ -184,6 +276,7 @@ function requestNewGame(level = state.level) {
 function finish(won) {
   state.endTime = performance.now();
   stopTimer();
+  clearSavedGame();
   const time = elapsedSeconds();
   let rank = 0;
   if (won) {
@@ -214,6 +307,7 @@ function act(i, wantFlag) {
   }
   if (outcome === 'boom') finish(false);
   if (outcome === 'won') finish(true);
+  if (b.state === 'playing') scheduleSave();
   paintLayer(state.game.layer, b);
   updateHud();
   requestRender();
@@ -230,7 +324,7 @@ function showResult(won, time, rank) {
   $('resultRecord').textContent = note;
   $('resultTime').textContent = formatDuration(time);
   $('resultSubLabel').textContent = won ? `최고 기록 (${LEVELS[state.level].label})` : '찾아낸 바다';
-  $('resultSub').textContent = won ? formatDuration(best) : `${Math.floor(progress(state.game.board) * 100)}%`;
+  $('resultSub').textContent = won ? formatDuration(best) : formatPercent(progress(state.game.board));
   $('result').classList.add('show');
   $('again').focus();
 }
@@ -401,6 +495,10 @@ function onWheel(e) {
 }
 
 function onKey(e) {
+  if (isResumeOpen()) {
+    if (e.key === 'Enter') { e.preventDefault(); resumeGame(); }
+    return;
+  }
   if (isRecordsOpen()) {
     if (e.key === 'Escape' || e.key === 'h' || e.key === 'H') hideRecords();
     return;
@@ -457,6 +555,11 @@ function bindUi() {
   $('zoomOut').addEventListener('click', () => zoomAt(state.view.w / 2, state.view.h / 2, 1 / BUTTON_ZOOM));
   $('zoomFit').addEventListener('click', fitView);
   $('again').addEventListener('click', () => newGame());
+  $('resumeGo').addEventListener('click', resumeGame);
+  $('resumeNew').addEventListener('click', () => { state.pendingResume = null; newGame(); });
+  // 창을 닫거나 다른 앱으로 넘어갈 때 바로 저장한다
+  window.addEventListener('pagehide', writeSavedGame);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) writeSavedGame(); });
   $('viewMap').addEventListener('click', hideResult);
 }
 
@@ -469,7 +572,9 @@ async function start() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     state.polygons = decodeLand(await res.json());
     $('status').remove();
-    newGame();
+    const saved = readSavedGame();
+    if (saved) offerResume(saved);
+    else newGame();
   } catch (err) {
     $('status').textContent = '지도를 불러오지 못했습니다. 새로고침 해 주세요.';
     console.error('land data load failed', err);

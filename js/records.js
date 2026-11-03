@@ -70,3 +70,9 @@ export function formatDate(ms) {
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+
+/** 0~1 비율을 백분율로. 10% 미만은 소수 한 자리까지 */
+export function formatPercent(ratio) {
+  const pct = ratio * 100;
+  return pct < 10 ? `${(Math.floor(pct * 10) / 10).toFixed(1)}%` : `${Math.floor(pct)}%`;
+}
