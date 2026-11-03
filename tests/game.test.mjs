@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  gridNeighbors, removeSmallOceans, createBoard, placeMines, reveal, chord, toggleFlag, progress,
+  gridNeighbors, keepLargestOcean, oceanNeighbors, createBoard, placeMines, reveal, chord, toggleFlag, progress,
 } from '../js/game.js';
 
 const seeded = (seed) => () => {
@@ -16,16 +16,23 @@ test('동서 끝 칸은 반대편 끝과 이웃이고 남북은 끊긴다', () =
   assert.equal(gridNeighbors(5, 3, 7).length, 8);
 });
 
-test('작은 바다 조각은 육지로 바뀌고 원본은 그대로다', () => {
+test('가장 큰 바다만 남고 떨어진 조각은 육지가 되며 원본은 그대로다', () => {
   const ocean = new Uint8Array([
     1, 1, 1, 0, 0, 0, 0, 0,
-    1, 1, 1, 0, 0, 1, 0, 0,
+    1, 1, 1, 0, 0, 1, 1, 0,
     0, 0, 0, 0, 0, 0, 0, 0,
   ]);
-  const out = removeSmallOceans(ocean, 8, 3, 3);
-  assert.equal(out[13], 0);
-  assert.equal(out[0], 1);
+  const out = keepLargestOcean(ocean, 8, 3);
+  assert.deepEqual([...out.slice(0, 3), out[13], out[14]], [1, 1, 1, 0, 0]);
   assert.equal(ocean[13], 1);
+});
+
+test('동서 끝을 넘어 이어진 바다는 한 덩어리로 본다', () => {
+  const ocean = new Uint8Array([
+    1, 1, 0, 0, 0, 1, 1, 1,
+  ]);
+  const out = keepLargestOcean(ocean, 8, 1);
+  assert.deepEqual([...out], [...ocean]);
 });
 
 test('첫 칸과 그 주변에는 지뢰가 없고 지뢰 수가 맞다', () => {
@@ -33,7 +40,7 @@ test('첫 칸과 그 주변에는 지뢰가 없고 지뢰 수가 맞다', () => 
     const b = createBoard(allOcean(10, 8), 10, 8, 0.2);
     placeMines(b, 33, seeded(s));
     assert.equal(b.mine[33], 0);
-    b.nb[33].forEach((n) => assert.equal(b.mine[n], 0));
+    oceanNeighbors(b, 33).forEach((n) => assert.equal(b.mine[n], 0));
     assert.equal(b.mine.reduce((a, x) => a + x, 0), b.mineCount);
   }
 });
@@ -52,7 +59,7 @@ test('숫자는 바다 이웃의 지뢰 수와 같다', () => {
   const b = createBoard(allOcean(12, 9), 12, 9, 0.18);
   placeMines(b, 0, seeded(3));
   for (let i = 0; i < 12 * 9; i += 1) {
-    const expected = b.nb[i].filter((n) => b.mine[n]).length;
+    const expected = oceanNeighbors(b, i).filter((n) => b.mine[n]).length;
     assert.equal(b.adj[i], expected);
   }
 });
@@ -103,16 +110,16 @@ test('숫자 칸 주변 깃발이 맞으면 한꺼번에 열고, 틀리면 터�
     return { b, i };
   };
   const { b, i } = make();
-  assert.equal(chord(b, i) === 'none' || b.nb[i].every((n) => b.open[n] || b.mine[n]), true);
-  b.nb[i].filter((n) => b.mine[n]).forEach((n) => toggleFlag(b, n));
+  assert.equal(chord(b, i) === 'none' || oceanNeighbors(b, i).every((n) => b.open[n] || b.mine[n]), true);
+  oceanNeighbors(b, i).filter((n) => b.mine[n]).forEach((n) => toggleFlag(b, n));
   const before = b.opened;
   const r = chord(b, i);
   assert.ok(r === 'opened' || r === 'won' || b.opened === before);
-  b.nb[i].forEach((n) => { if (!b.mine[n]) assert.equal(b.open[n], 1); });
+  oceanNeighbors(b, i).forEach((n) => { if (!b.mine[n]) assert.equal(b.open[n], 1); });
 
   const w = make();
-  const wrongFlag = w.b.nb[w.i].filter((n) => !w.b.mine[n] && !w.b.open[n]);
-  const mines = w.b.nb[w.i].filter((n) => w.b.mine[n]);
+  const wrongFlag = oceanNeighbors(w.b, w.i).filter((n) => !w.b.mine[n] && !w.b.open[n]);
+  const mines = oceanNeighbors(w.b, w.i).filter((n) => w.b.mine[n]);
   if (wrongFlag.length >= mines.length) {
     wrongFlag.slice(0, mines.length).forEach((n) => toggleFlag(w.b, n));
     assert.equal(chord(w.b, w.i), 'boom');

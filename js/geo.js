@@ -2,8 +2,23 @@
 
 const LAT_TOP_BASE = 80;
 const LAT_SPAN = 150;
-const MASK_RES = 8; // 칸 하나를 8x8 픽셀로 칠해 육지 비율을 잰다
+const MASK_WIDTH_PX = 3200; // 육지 비율을 잴 때 쓰는 그림 폭 (휴대폰 캔버스 한도 안쪽)
+const MASK_RES_MIN = 3;
+const MASK_RES_MAX = 8;
 const LAND_RATIO = 0.5;
+
+/**
+ * 지도 데이터가 거칠어 막혀 버린 실제 해협. 경위도 꺾은선을 따라 칸을 바다로 뚫는다.
+ * 이것으로 지중해·흑해·홍해·페르시아만·발트해·아조프해가 큰 바다와 이어진다.
+ */
+export const STRAITS = [
+  { name: '지브롤터', path: [[-7.0, 36.0], [-5.6, 35.95], [-4.5, 36.1]] },
+  { name: '다르다넬스·보스포루스', path: [[25.6, 39.9], [26.4, 40.2], [26.8, 40.45], [27.6, 40.7], [28.9, 40.95], [29.1, 41.2], [29.4, 41.5]] },
+  { name: '케르치', path: [[36.3, 45.6], [36.55, 45.2], [36.6, 44.9]] },
+  { name: '바브엘만데브', path: [[42.8, 13.6], [43.4, 12.6], [44.2, 12.1], [45.0, 12.0]] },
+  { name: '호르무즈', path: [[55.6, 26.2], [56.3, 26.5], [56.7, 26.0], [57.2, 25.5], [58.0, 25.0]] },
+  { name: '덴마크 해협', path: [[9.5, 57.8], [10.8, 57.7], [11.5, 57.0], [12.3, 56.3], [12.7, 55.6], [13.2, 55.2]] },
+];
 
 /** 날짜변경선(±180°)을 건너는 고리는 경도를 이어 붙여 화면을 가로지르는 선이 생기지 않게 한다 */
 export function unwrapRing(ring) {
@@ -81,9 +96,35 @@ function tracePolygons(ctx, polygons, layout, scale, offsetX) {
   }
 }
 
+export function maskResolution(cols) {
+  return Math.max(MASK_RES_MIN, Math.min(MASK_RES_MAX, Math.floor(MASK_WIDTH_PX / cols)));
+}
+
+/** 꺾은선을 따라 지나는 칸을 바다로 만든 새 배열 */
+export function carveStraits(ocean, layout, straits = STRAITS) {
+  const { cols, rows, cellDeg } = layout;
+  const out = Uint8Array.from(ocean);
+  const stepDeg = cellDeg / 4;
+  for (const { path } of straits) {
+    for (let k = 1; k < path.length; k += 1) {
+      const [lon0, lat0] = path[k - 1];
+      const [lon1, lat1] = path[k];
+      const steps = Math.max(1, Math.ceil(Math.hypot(lon1 - lon0, lat1 - lat0) / stepDeg));
+      for (let t = 0; t <= steps; t += 1) {
+        const [x, y] = project(layout, lon0 + ((lon1 - lon0) * t) / steps, lat0 + ((lat1 - lat0) * t) / steps);
+        const r = Math.floor(y);
+        if (r < 0 || r >= rows) continue;
+        out[r * cols + (((Math.floor(x) % cols) + cols) % cols)] = 1;
+      }
+    }
+  }
+  return out;
+}
+
 /** 칸마다 바다(1)/육지(0) 를 담은 배열 */
 export function buildOceanMask(polygons, layout) {
   const { cols, rows } = layout;
+  const MASK_RES = maskResolution(cols);
   const w = cols * MASK_RES;
   const h = rows * MASK_RES;
   const canvas = document.createElement('canvas');

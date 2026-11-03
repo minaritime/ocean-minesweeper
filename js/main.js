@@ -1,6 +1,6 @@
-import { LEVELS, createBoard, removeSmallOceans, reveal, chord, toggleFlag, progress } from './game.js';
-import { decodeLand, makeLayout, buildOceanMask, buildCoastPath } from './geo.js';
-import { draw } from './render.js';
+import { LEVELS, createBoard, keepLargestOcean, reveal, chord, toggleFlag, progress } from './game.js';
+import { decodeLand, makeLayout, buildOceanMask, buildCoastPath, carveStraits } from './geo.js';
+import { draw, createLayer, paintLayer } from './render.js';
 import {
   normalizeHistory, addPlay, addClear, summarize, rankOf, formatDuration, formatClock, formatDate,
 } from './records.js';
@@ -9,8 +9,12 @@ const LONG_PRESS_MS = 380;
 const DRAG_THRESHOLD = 7;
 const MAX_CELL_PX = 90;
 const FILL_CELL_PX_MAX = 40;
+const MIN_PLAY_PX = 8; // 칸이 이보다 작으면 누른 곳을 먼저 확대한다
+const TAP_ZOOM_PX = 26;
+const WHEEL_SPEED = 0.0025;
+const BUTTON_ZOOM = 1.5;
 const RESULT_DELAY = { won: 450, lost: 900 };
-const STORE_KEY = 'ocean-minesweeper-v2';
+const STORE_KEY = 'world-minesweeper-v3';
 const RECORD_LIST_LIMIT = 50;
 const CONFIRM_RESTART_AFTER_SEC = 60;
 
@@ -152,13 +156,12 @@ function newGame(level = state.level) {
   save();
   const { cols, density } = LEVELS[level];
   const layout = makeLayout(cols);
-  const minRegion = Math.max(6, Math.round(cols / 5));
-  const ocean = removeSmallOceans(buildOceanMask(state.polygons, layout), layout.cols, layout.rows, minRegion);
-  state.game = {
-    layout,
-    board: createBoard(ocean, layout.cols, layout.rows, density),
-    coast: buildCoastPath(state.polygons, layout),
-  };
+  const carved = carveStraits(buildOceanMask(state.polygons, layout), layout);
+  const ocean = keepLargestOcean(carved, layout.cols, layout.rows);
+  const board = createBoard(ocean, layout.cols, layout.rows, density);
+  const layer = createLayer(board);
+  paintLayer(layer, board);
+  state.game = { layout, board, layer, coast: buildCoastPath(state.polygons, layout) };
   stopTimer();
   clearTimeout(state.resultTimer);
   state.startTime = 0;
@@ -211,6 +214,7 @@ function act(i, wantFlag) {
   }
   if (outcome === 'boom') finish(false);
   if (outcome === 'won') finish(true);
+  paintLayer(state.game.layer, b);
   updateHud();
   requestRender();
 }
@@ -316,6 +320,7 @@ function onPointerDown(e) {
     if (e.pointerType !== 'mouse') {
       gesture.timer = setTimeout(() => {
         if (gesture?.kind !== 'tap') return;
+        if (state.view.z < MIN_PLAY_PX) return;
         gesture.longPressed = true;
         if (navigator.vibrate) navigator.vibrate(25);
         act(cellAt(p.x, p.y), !state.flagMode);
@@ -370,7 +375,8 @@ function onPointerUp(e) {
   if (gesture?.kind === 'tap' && !gesture.longPressed && pointers.size === 0) {
     clearTimeout(gesture.timer);
     const { x, y } = gesture.start;
-    if (gesture.button === 2) act(cellAt(x, y), true);
+    if (state.view.z < MIN_PLAY_PX) zoomAt(x, y, TAP_ZOOM_PX / state.view.z);
+    else if (gesture.button === 2) act(cellAt(x, y), true);
     else if (gesture.button === 1) act(cellAt(x, y), false);
     else act(cellAt(x, y), state.flagMode);
   }
@@ -391,7 +397,7 @@ function onPointerCancel(e) {
 function onWheel(e) {
   e.preventDefault();
   const p = localPoint(e);
-  zoomAt(p.x, p.y, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)));
+  zoomAt(p.x, p.y, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : WHEEL_SPEED)));
 }
 
 function onKey(e) {
@@ -447,8 +453,8 @@ function bindUi() {
   $('records').addEventListener('click', (e) => { if (e.target === e.currentTarget) hideRecords(); });
   $('restart').addEventListener('click', (e) => { requestNewGame(); e.currentTarget.blur(); });
   $('flagMode').addEventListener('click', (e) => { state.flagMode = !state.flagMode; updateHud(); e.currentTarget.blur(); });
-  $('zoomIn').addEventListener('click', () => zoomAt(state.view.w / 2, state.view.h / 2, 1.3));
-  $('zoomOut').addEventListener('click', () => zoomAt(state.view.w / 2, state.view.h / 2, 1 / 1.3));
+  $('zoomIn').addEventListener('click', () => zoomAt(state.view.w / 2, state.view.h / 2, BUTTON_ZOOM));
+  $('zoomOut').addEventListener('click', () => zoomAt(state.view.w / 2, state.view.h / 2, 1 / BUTTON_ZOOM));
   $('zoomFit').addEventListener('click', fitView);
   $('again').addEventListener('click', () => newGame());
   $('viewMap').addEventListener('click', hideResult);
