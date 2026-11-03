@@ -1,13 +1,18 @@
 import { LEVELS, createBoard, removeSmallOceans, reveal, chord, toggleFlag, progress } from './game.js';
 import { decodeLand, makeLayout, buildOceanMask, buildCoastPath } from './geo.js';
 import { draw } from './render.js';
+import {
+  normalizeHistory, addPlay, addClear, summarize, rankOf, formatDuration, formatClock, formatDate,
+} from './records.js';
 
 const LONG_PRESS_MS = 380;
 const DRAG_THRESHOLD = 7;
 const MAX_CELL_PX = 90;
 const FILL_CELL_PX_MAX = 40;
 const RESULT_DELAY = { won: 450, lost: 900 };
-const STORE_KEY = 'ocean-minesweeper';
+const STORE_KEY = 'ocean-minesweeper-v2';
+const RECORD_LIST_LIMIT = 50;
+const CONFIRM_RESTART_AFTER_SEC = 60;
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('board');
@@ -27,7 +32,10 @@ const saved = store.read();
 const state = {
   polygons: null,
   level: LEVELS[saved.level] ? saved.level : 'easy',
-  best: saved.best || {},
+  history: normalizeHistory(saved.history),
+  recordsLevel: null,
+  recordsSort: 'time',
+  lastClear: null,
   game: null,
   view: { w: 0, h: 0, dpr: 1, z: 20, panX: 0, panY: 0, fitZ: 20 },
   hover: -1,
@@ -119,8 +127,8 @@ function elapsedSeconds() {
 function updateHud() {
   const b = state.game?.board;
   $('flags').textContent = b ? b.mineCount - b.flags : 0;
-  $('time').textContent = Math.floor(elapsedSeconds());
-  document.querySelectorAll('.levels button').forEach((btn) => {
+  $('time').textContent = formatClock(elapsedSeconds());
+  document.querySelectorAll('header .levels button').forEach((btn) => {
     btn.setAttribute('aria-pressed', String(btn.dataset.level === state.level));
   });
   $('flagMode').setAttribute('aria-pressed', String(state.flagMode));
@@ -134,13 +142,18 @@ function stopTimer() {
 
 /* ---------- 게임 흐름 ---------- */
 
+function save() {
+  store.write({ level: state.level, history: state.history });
+}
+
 function newGame(level = state.level) {
   if (!state.polygons) return;
   state.level = level;
-  store.write({ level, best: state.best });
+  save();
   const { cols, density } = LEVELS[level];
   const layout = makeLayout(cols);
-  const ocean = removeSmallOceans(buildOceanMask(state.polygons, layout), layout.cols, layout.rows);
+  const minRegion = Math.max(6, Math.round(cols / 5));
+  const ocean = removeSmallOceans(buildOceanMask(state.polygons, layout), layout.cols, layout.rows, minRegion);
   state.game = {
     layout,
     board: createBoard(ocean, layout.cols, layout.rows, density),
@@ -152,23 +165,35 @@ function newGame(level = state.level) {
   state.endTime = 0;
   state.hover = -1;
   hideResult();
+  hideRecords();
   fitView();
   updateHud();
+}
+
+/** 오래 진행한 판을 실수로 버리지 않도록 한 번 묻는다 */
+function requestNewGame(level = state.level) {
+  const playing = state.game?.board.state === 'playing';
+  if (playing && elapsedSeconds() > CONFIRM_RESTART_AFTER_SEC
+    && !window.confirm(`${formatClock(elapsedSeconds())} 동안 진행한 판입니다. 버리고 새로 시작할까요?`)) return;
+  newGame(level);
 }
 
 function finish(won) {
   state.endTime = performance.now();
   stopTimer();
   const time = elapsedSeconds();
-  const prev = state.best[state.level];
-  const isRecord = won && (!prev || time < prev);
-  if (isRecord) {
-    state.best = { ...state.best, [state.level]: time };
-    store.write({ level: state.level, best: state.best });
+  let rank = 0;
+  if (won) {
+    const { board } = state.game;
+    const entry = { level: state.level, time, at: Date.now(), mines: board.mineCount, cells: board.oceanCount };
+    state.history = addClear(state.history, entry);
+    state.lastClear = entry;
+    rank = rankOf(state.history, entry);
+    save();
   }
   if (!won && navigator.vibrate) navigator.vibrate(120);
   updateHud();
-  state.resultTimer = setTimeout(() => showResult(won, time, isRecord), won ? RESULT_DELAY.won : RESULT_DELAY.lost);
+  state.resultTimer = setTimeout(() => showResult(won, time, rank), won ? RESULT_DELAY.won : RESULT_DELAY.lost);
 }
 
 function act(i, wantFlag) {
@@ -180,6 +205,8 @@ function act(i, wantFlag) {
   else outcome = reveal(b, i);
   if (b.state !== 'ready' && !state.startTime) {
     state.startTime = performance.now();
+    state.history = addPlay(state.history, state.level);
+    save();
     state.timer = setInterval(updateHud, 250);
   }
   if (outcome === 'boom') finish(false);
@@ -190,16 +217,16 @@ function act(i, wantFlag) {
 
 /* ---------- 결과창 ---------- */
 
-const fmt = (sec) => `${sec.toFixed(1)}초`;
-
-function showResult(won, time, isRecord) {
-  const best = state.best[state.level];
+function showResult(won, time, rank) {
+  const { best, clears } = summarize(state.history, state.level);
   $('resultIcon').textContent = won ? '🏆' : '💥';
   $('resultTitle').textContent = won ? '바다를 모두 지켰습니다!' : '지뢰를 밟았습니다';
-  $('resultRecord').textContent = isRecord ? '새 최고 기록!' : '';
-  $('resultTime').textContent = fmt(time);
+  let note = '';
+  if (won) note = rank === 1 ? '새 최고 기록!' : `${LEVELS[state.level].label} ${clears}번 클리어 중 ${rank}위`;
+  $('resultRecord').textContent = note;
+  $('resultTime').textContent = formatDuration(time);
   $('resultSubLabel').textContent = won ? `최고 기록 (${LEVELS[state.level].label})` : '찾아낸 바다';
-  $('resultSub').textContent = won ? fmt(best) : `${Math.floor(progress(state.game.board) * 100)}%`;
+  $('resultSub').textContent = won ? formatDuration(best) : `${Math.floor(progress(state.game.board) * 100)}%`;
   $('result').classList.add('show');
   $('again').focus();
 }
@@ -209,6 +236,60 @@ function hideResult() {
 }
 
 const isResultOpen = () => $('result').classList.contains('show');
+
+/* ---------- 기록창 ---------- */
+
+function recordRow(entry, rankNo) {
+  const li = document.createElement('li');
+  if (entry === state.lastClear) li.classList.add('fresh');
+  const parts = [['rank', String(rankNo)], ['t', formatDuration(entry.time)], ['d', formatDate(entry.at)]];
+  for (const [cls, text] of parts) {
+    const span = document.createElement('span');
+    span.className = cls;
+    span.textContent = text;
+    li.append(span);
+  }
+  return li;
+}
+
+function renderRecords() {
+  const level = state.recordsLevel;
+  const sum = summarize(state.history, level);
+  $('recordTabs').querySelectorAll('button').forEach((btn) => {
+    btn.setAttribute('aria-pressed', String(btn.dataset.level === level));
+  });
+  document.querySelectorAll('.sort button').forEach((btn) => {
+    btn.setAttribute('aria-pressed', String(btn.dataset.sort === state.recordsSort));
+  });
+  $('recBest').textContent = sum.best === null ? '없음' : formatDuration(sum.best);
+  $('recClears').textContent = `${sum.clears}번`;
+  $('recPlays').textContent = `${sum.plays}번`;
+  const list = (state.recordsSort === 'time' ? sum.byTime : sum.recent).slice(0, RECORD_LIST_LIMIT);
+  const ol = $('recList');
+  ol.replaceChildren();
+  if (!list.length) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = '아직 클리어 기록이 없습니다';
+    ol.append(li);
+    return;
+  }
+  list.forEach((entry) => ol.append(recordRow(entry, sum.byTime.indexOf(entry) + 1)));
+}
+
+function openRecords(level = state.level) {
+  state.recordsLevel = level;
+  hideResult();
+  renderRecords();
+  $('records').classList.add('show');
+  $('closeRecords').focus();
+}
+
+function hideRecords() {
+  $('records').classList.remove('show');
+}
+
+const isRecordsOpen = () => $('records').classList.contains('show');
 
 /* ---------- 입력 ---------- */
 
@@ -314,6 +395,10 @@ function onWheel(e) {
 }
 
 function onKey(e) {
+  if (isRecordsOpen()) {
+    if (e.key === 'Escape' || e.key === 'h' || e.key === 'H') hideRecords();
+    return;
+  }
   if (isResultOpen()) {
     if (e.key === 'Enter' || e.key === ' ' || e.key === 'r' || e.key === 'R') {
       e.preventDefault();
@@ -322,7 +407,8 @@ function onKey(e) {
     return;
   }
   const k = e.key.toLowerCase();
-  if (k === 'r' || e.key === 'F2') { e.preventDefault(); newGame(); }
+  if (k === 'r' || e.key === 'F2') { e.preventDefault(); requestNewGame(); }
+  else if (k === 'h') openRecords();
   else if (k === 'f') { state.flagMode = !state.flagMode; updateHud(); }
   else if (e.key === '+' || e.key === '=') zoomAt(state.view.w / 2, state.view.h / 2, 1.25);
   else if (e.key === '-') zoomAt(state.view.w / 2, state.view.h / 2, 0.8);
@@ -342,10 +428,24 @@ function bindUi() {
   canvas.addEventListener('click', () => {}); // 지도도 눌리는 대상임을 알려 터치 보정이 버튼으로 새지 않게 한다
   window.addEventListener('resize', resizeCanvas);
   window.addEventListener('keydown', onKey);
-  document.querySelectorAll('.levels button').forEach((btn) => {
-    btn.addEventListener('click', () => { newGame(btn.dataset.level); btn.blur(); });
+  document.querySelectorAll('header .levels button').forEach((btn) => {
+    btn.addEventListener('click', () => { requestNewGame(btn.dataset.level); btn.blur(); });
   });
-  $('restart').addEventListener('click', (e) => { newGame(); e.currentTarget.blur(); });
+  Object.entries(LEVELS).forEach(([key, lv]) => {
+    const tab = document.createElement('button');
+    tab.dataset.level = key;
+    tab.textContent = lv.label;
+    tab.addEventListener('click', () => { state.recordsLevel = key; renderRecords(); });
+    $('recordTabs').append(tab);
+  });
+  document.querySelectorAll('.sort button').forEach((btn) => {
+    btn.addEventListener('click', () => { state.recordsSort = btn.dataset.sort; renderRecords(); });
+  });
+  $('openRecords').addEventListener('click', (e) => { openRecords(); e.currentTarget.blur(); });
+  $('resultRecords').addEventListener('click', () => openRecords());
+  $('closeRecords').addEventListener('click', hideRecords);
+  $('records').addEventListener('click', (e) => { if (e.target === e.currentTarget) hideRecords(); });
+  $('restart').addEventListener('click', (e) => { requestNewGame(); e.currentTarget.blur(); });
   $('flagMode').addEventListener('click', (e) => { state.flagMode = !state.flagMode; updateHud(); e.currentTarget.blur(); });
   $('zoomIn').addEventListener('click', () => zoomAt(state.view.w / 2, state.view.h / 2, 1.3));
   $('zoomOut').addEventListener('click', () => zoomAt(state.view.w / 2, state.view.h / 2, 1 / 1.3));

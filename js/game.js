@@ -2,9 +2,10 @@
 // 격자는 동서로 이어져 있고(지구 한 바퀴), 남북은 끊겨 있다. 육지 칸은 벽이다.
 
 export const LEVELS = {
-  easy: { label: '쉬움', cols: 36, density: 0.12 },
-  normal: { label: '보통', cols: 54, density: 0.15 },
-  hard: { label: '어려움', cols: 80, density: 0.18 },
+  easy: { label: '쉬움', cols: 80, density: 0.12 },
+  normal: { label: '보통', cols: 120, density: 0.14 },
+  hard: { label: '어려움', cols: 160, density: 0.16 },
+  extreme: { label: '최고', cols: 200, density: 0.17 },
 };
 
 const MIN_OCEAN_REGION = 6;
