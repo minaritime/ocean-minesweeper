@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createBoard, reveal, toggleFlag, packCells, unpackBoard, LEVELS } from '../js/game.js';
-import { snapshot, restore, bytesToBase64, base64ToBytes } from '../js/save.js';
+import { snapshot, restore, bytesToBase64, base64ToBytes, lostSnapshot, restoreLost } from '../js/save.js';
 
 const seeded = (seed) => () => {
   seed = (seed * 1664525 + 1013904223) % 4294967296;
@@ -77,7 +77,7 @@ const viewOf = { z: 20, panX: -10, panY: 5 };
 
 test('능력 모드 저장: 모드·보관한 능력·받은 단계·고르던 후보가 되살아난다', () => {
   const b = playedBoard(LEVELS.easy.cols, 12);
-  const abilities = { inv: [{ key: 'probe', uses: 2 }, { key: 'shield', uses: 1 }], granted: 2, offer: ['scan', 'beacon', 'probe'], picks: ['probe', 'shield'] };
+  const abilities = { inv: [{ key: 'probe', uses: 2 }, { key: 'shield', uses: 1 }], granted: 2, offer: ['scan', 'quantum', 'probe'], picks: ['probe', 'shield'], look: 'land', counts: [{ i: 5, n: 3 }] };
   const data = JSON.parse(JSON.stringify(snapshot({
     mode: 'ability', abilities, level: 'easy', layout: easyLayout(12), board: b, elapsed: 5, view: viewOf, savedAt: 1,
   })));
@@ -94,16 +94,32 @@ test('옛(v1) 저장은 기본 모드로 읽는다', () => {
   delete data.abilities;
   const back = restore(data);
   assert.equal(back.mode, 'basic');
-  assert.deepEqual(back.abilities, { inv: [], granted: 0, offer: null, picks: [] });
+  assert.deepEqual(back.abilities, { inv: [], granted: 0, offer: null, picks: [], look: 'sea', counts: [] });
 });
 
 test('능력 저장값이 망가졌으면 걸러 읽는다', () => {
   const b = playedBoard(LEVELS.easy.cols, 12);
   const data = snapshot({
     mode: 'ability', level: 'easy', layout: easyLayout(12), board: b, elapsed: 5, view: viewOf, savedAt: 1,
-    abilities: { inv: [{ key: 'x', uses: 1 }], granted: 99, offer: ['nope'], picks: 'bad' },
+    abilities: { inv: [{ key: 'x', uses: 1 }], granted: 99, offer: ['nope'], picks: 'bad', look: 'moon', counts: [{ i: -1, n: 2 }, 'x'] },
   });
   const back = restore(data);
-  assert.deepEqual(back.abilities, { inv: [], granted: 3, offer: null, picks: [] });
+  assert.deepEqual(back.abilities, { inv: [], granted: 3, offer: null, picks: [], look: 'sea', counts: [] });
   assert.equal(restore({ ...data, mode: 'weird' }), null);
+});
+
+test('였던것: 진 판을 되살리면 밟은 지뢰에 깃발이 꽂혀 이어 할 수 있다', () => {
+  const b = playedBoard(LEVELS.easy.cols, 12);
+  const mine = b.mine.findIndex((m, i) => m && !b.flag[i]);
+  assert.equal(reveal(b, mine), 'boom');
+  const data = JSON.parse(JSON.stringify(lostSnapshot({
+    mode: 'basic', level: 'easy', layout: easyLayout(12), board: b, elapsed: 42, view: viewOf, savedAt: 1,
+  }, b.exploded)));
+  const back = restoreLost(data);
+  assert.equal(back.board.state, 'playing');
+  assert.equal(back.board.flag[mine], 1);
+  assert.equal(back.board.flags, b.flags + 1);
+  assert.equal(back.elapsed, 42);
+  assert.equal(restoreLost({ ...data, exploded: back.board.ocean.findIndex((o, i) => o && !back.board.mine[i]) }), null);
+  assert.equal(restoreLost(null), null);
 });

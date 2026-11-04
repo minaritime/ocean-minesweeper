@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { createBoard, forEachGridNeighbor, reveal, chord, toggleFlag } from '../js/game.js';
 import {
   ABILITIES, ABILITY_KEYS, MILESTONES, OFFER_SIZE, offerChoices, milestonesReached,
-  addAbility, spendAbility, usesOf, normalizeInventory, probe, scan, scanCells, beaconTarget,
+  addAbility, spendAbility, usesOf, normalizeInventory, probe, scan, scanCells,
+  SLOT_KEYS, eligibleKeys, gainOf, removeAbility, quantum, countMines, thornsCells, coastCells, deadEndCells,
+  circleCells, sink, resolveCells,
 } from '../js/abilities.js';
 
 const seeded = (seed) => () => {
@@ -30,8 +32,10 @@ test('능력표: 이름·횟수·발동 방식이 다 있다', () => {
   for (const key of ABILITY_KEYS) {
     const a = ABILITIES[key];
     assert.ok(a.name && a.icon && a.desc, key);
+    assert.ok(['slot', 'event'].includes(a.kind), key);
+    if (a.kind === 'event') continue;
     assert.ok(Number.isInteger(a.uses) && a.uses > 0, key);
-    assert.ok(['cell', 'area', 'instant', 'passive'].includes(a.target), key);
+    assert.ok(['cell', 'area', 'pair', 'count', 'circle', 'instant', 'passive'].includes(a.target), key);
   }
 });
 
@@ -85,9 +89,9 @@ test('능력 보관: 같은 능력은 횟수가 더해지고 원본은 그대로
 });
 
 test('다 쓴 능력은 칸에서 빠진다', () => {
-  let inv = addAbility([], 'shield');
-  assert.equal(usesOf(inv, 'shield'), 1);
-  inv = spendAbility(inv, 'shield');
+  let inv = addAbility([], 'coast');
+  assert.equal(usesOf(inv, 'coast'), 1);
+  inv = spendAbility(inv, 'coast');
   assert.deepEqual(inv, []);
   assert.deepEqual(spendAbility([], 'probe'), []);
 });
@@ -155,25 +159,6 @@ test('투시: 다 열린 곳이면 쓰지 않고, 판이 다 풀리면 클리어
   assert.equal(scan(b, 4), 'none');
 });
 
-test('등대: 숫자 0인 칸을 먼저, 없으면 숫자가 가장 작은 안전칸', () => {
-  const b = boardWith(10, 3, [0, 20, 9]);
-  const all = [...Array(30).keys()];
-  const t = beaconTarget(b, all);
-  assert.equal(b.adj[t], 0);
-  assert.equal(b.mine[t], 0);
-  const onlyNumbered = [10, 11, 1]; // 숫자 3, 2, 1
-  const pick = beaconTarget(b, onlyNumbered);
-  assert.equal(pick, 1);
-});
-
-test('등대: 후보 순서가 앞선 칸을 고르고, 안전칸이 없으면 -1', () => {
-  const b = boardWith(10, 3, [0]);
-  assert.equal(beaconTarget(b, [25, 15, 5]), 25);
-  assert.equal(beaconTarget(b, [0]), -1);
-  reveal(b, 25);
-  assert.equal(beaconTarget(b, [25]), -1); // 이미 열린 칸
-});
-
 test('방패: 지뢰를 밟아도 끝나지 않고 깃발이 꽂힌다', () => {
   const b = boardWith(6, 6, [14]);
   assert.equal(reveal(b, 14, Math.random, { shield: true }), 'shielded');
@@ -201,17 +186,124 @@ test('방패: 숫자 칸 한꺼번에 열기에서 밟아도 한 번만 막고 �
   assert.equal(b.flag[8] + b.flag[22], 1);
 });
 
-test('등대: 깃발 꽂힌 칸은 고르지 않는다 (잘못 꽂은 깃발에 써 버리지 않게)', () => {
-  const b = boardWith(10, 3, [0]);
-  toggleFlag(b, 25);
-  assert.equal(beaconTarget(b, [25, 15]), 15);
-  assert.equal(beaconTarget(b, [25]), -1);
-});
-
 test('투시: 3×3 안이 이미 깃발 꽂힌 지뢰뿐이면 쓰지 않는다', () => {
   const b = boardWith(3, 3, [0, 1, 2, 3, 5, 6, 7, 8]);
   b.open[4] = 1;
   b.opened = 1;
   for (const m of [0, 1, 2, 3, 5, 6, 7, 8]) toggleFlag(b, m);
   assert.equal(scan(b, 4), 'none');
+});
+
+test('조정한 횟수: 탐지 5, 투시 3, 방패 10', () => {
+  assert.equal(ABILITIES.probe.uses, 5);
+  assert.equal(ABILITIES.scan.uses, 3);
+  assert.equal(ABILITIES.shield.uses, 10);
+  assert.equal(ABILITIES.beacon, undefined);
+});
+
+test('후보: 국국가가·핵전쟁은 첫 고르기에만, 였던것은 진 판이 있을 때만', () => {
+  const first = eligibleKeys({ picks: [], hasLost: false, look: 'sea' });
+  assert.ok(first.includes('continent') && first.includes('nuke'));
+  assert.ok(!first.includes('remnant'));
+  const later = eligibleKeys({ picks: ['probe'], hasLost: true, look: 'sea' });
+  assert.ok(!later.includes('continent') && !later.includes('nuke'));
+  assert.ok(later.includes('remnant'));
+  const nuked = eligibleKeys({ picks: ['nuke'], hasLost: false, look: 'nuke' });
+  assert.ok(!nuked.includes('coast') && !nuked.includes('unfair'));
+});
+
+test('핵전쟁 뒤에 받는 능력은 횟수가 2배', () => {
+  assert.equal(gainOf('probe', []), 5);
+  assert.equal(gainOf('probe', ['nuke', 'probe']), 10);
+  assert.ok(SLOT_KEYS.every((k) => ABILITIES[k].kind === 'slot'));
+  assert.deepEqual(normalizeInventory([{ key: 'nuke', uses: 1 }]), []);
+});
+
+test('양자역학: 하나만 지뢰면 안전한 칸을 열고 지뢰엔 깃발', () => {
+  const b = boardWith(6, 6, [14]);
+  assert.ok(['done', 'won'].includes(quantum(b, 14, 30)));
+  assert.equal(b.flag[14], 1);
+  assert.equal(b.open[30], 1);
+});
+
+test('양자역학: 둘 다 안전하거나 둘 다 지뢰면 collapse, 판은 그대로', () => {
+  const b = boardWith(6, 6, [14, 15]);
+  assert.equal(quantum(b, 14, 15), 'collapse');
+  assert.equal(quantum(b, 30, 35), 'collapse');
+  assert.equal(b.opened, 0);
+  assert.equal(b.flags, 0);
+  assert.equal(quantum(b, 30, 30), 'none');
+  assert.deepEqual(removeAbility([{ key: 'quantum', uses: 4 }, { key: 'probe', uses: 1 }], 'quantum'), [{ key: 'probe', uses: 1 }]);
+});
+
+test('세기: 5×5 안 지뢰 수 (동서로 이어짐, 육지는 -1)', () => {
+  const b = boardWith(10, 10, [44, 46, 0, 9, 99], [55]);
+  assert.equal(countMines(b, 45), 2); // (4,5) 주변: 44, 46
+  assert.equal(countMines(b, 10), 2); // (1,0) 주변: 0, 9(서쪽으로 넘어감)
+  assert.equal(countMines(b, 55), -1);
+});
+
+test('가시갑옷: 막은 지뢰 기준 상하좌우 2칸을 푼다', () => {
+  const b = boardWith(9, 9, [40, 22, 76]);
+  assert.equal(reveal(b, 40, Math.random, { shield: true }), 'shielded');
+  assert.equal(b.guarded, 40);
+  const cells = thornsCells(b, 40);
+  assert.equal(cells.length, 8);
+  assert.deepEqual([...cells].sort((x, y) => x - y), [22, 31, 38, 39, 41, 42, 49, 58]);
+  resolveCells(b, cells);
+  assert.equal(b.flag[22], 1);
+  assert.equal(b.open[31], 1);
+  assert.ok(!cells.includes(76)); // 범위 밖
+});
+
+test('영해: 육지에 닿은 칸만 푼다', () => {
+  const b = boardWith(8, 8, [10], [27, 28]);
+  const cells = coastCells(b);
+  assert.ok(cells.includes(18) && cells.includes(36) && cells.includes(29));
+  assert.ok(!cells.includes(0) && !cells.includes(10));
+});
+
+test('억까 ㄴ: 주변 바다가 2칸 이하인 막다른 칸', () => {
+  // 5×5, 가운데 12 하나만 바다로 이어진 막다른 길: 12 주변에 바다는 7 하나
+  const land = [6, 8, 11, 13, 16, 17, 18];
+  const b = boardWith(5, 5, [24], land);
+  const cells = deadEndCells(b);
+  assert.ok(cells.includes(12));
+  assert.ok(!cells.includes(2));
+});
+
+test('아틀란티스: 원 안은 육지가 되고 지뢰 수·숫자가 다시 맞춰진다', () => {
+  const b = boardWith(40, 30, [0, 615, 640]);
+  const before = b.mineCount;
+  const out = sink(b, circleCells(b, 615, 3));
+  assert.ok(['done', 'won'].includes(out));
+  assert.equal(b.ocean[615], 0);
+  assert.equal(b.mine[615], 0);
+  assert.ok(b.mineCount < before);
+  assert.equal(b.oceanCount, 1200 - circleCells(b, 615, 3).length);
+  for (let i = 0; i < 1200; i += 1) {
+    if (!b.ocean[i]) continue;
+    let n = 0;
+    forEachGridNeighbor(40, 30, i, (k) => { n += b.mine[k]; });
+    assert.equal(b.adj[i], n, `adj ${i}`);
+  }
+});
+
+test('아틀란티스: 원이 동서 끝을 넘어 이어진다', () => {
+  const b = boardWith(30, 30, [0]);
+  const cells = circleCells(b, 15 * 30, 2);
+  assert.ok(cells.includes(15 * 30 + 29) && cells.includes(15 * 30 + 28));
+  assert.equal(cells.length, 13);
+});
+
+test('아틀란티스: 대륙판(국국가가)에서는 후보에 나오지 않는다', () => {
+  assert.ok(!eligibleKeys({ picks: ['continent'], hasLost: false, look: 'land' }).includes('atlantis'));
+  assert.ok(eligibleKeys({ picks: ['probe'], hasLost: false, look: 'sea' }).includes('atlantis'));
+});
+
+test('아틀란티스: 마지막 지뢰까지 메우면 남은 칸이 열리고 클리어', () => {
+  const b = boardWith(30, 30, [465]);
+  assert.equal(sink(b, circleCells(b, 465, 2)), 'won');
+  assert.equal(b.state, 'won');
+  assert.equal(b.mineCount, 0);
 });

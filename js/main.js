@@ -4,12 +4,10 @@ import { draw, createLayer, paintLayer } from './render.js';
 import {
   normalizeHistory, addPlay, addClear, summarize, rankOf, formatDuration, formatClock, formatPercent,
 } from './records.js';
-import { snapshot, restore, emptyAbilities } from './save.js';
-import {
-  ABILITIES, MILESTONES, offerChoices, milestonesReached, addAbility, spendAbility, usesOf,
-  probe, scan, scanCells, beaconTarget,
-} from './abilities.js';
-import { renderAbilityBar, renderOffer } from './ability-ui.js';
+import { snapshot, restore, emptyAbilities, lostSnapshot, restoreLost } from './save.js';
+import { renderAbilityBar } from './ability-ui.js';
+import { createAbilityFlow } from './ability-flow.js';
+import { createEffects } from './effects.js';
 import { renderRecords as renderRecordsView } from './records-ui.js';
 import { buildStart, renderStart } from './start-ui.js';
 
@@ -24,6 +22,7 @@ const BUTTON_ZOOM = 1.5;
 const RESULT_DELAY = { won: 450, lost: 900 };
 const STORE_KEY = 'world-minesweeper-v3';
 const SAVE_KEY = 'world-minesweeper-save';
+const LOST_KEY = 'world-minesweeper-lost'; // 마지막으로 진 판 (였던것)
 const SAVE_DELAY_MS = 800;
 const TOAST_MS = 3200;
 const CONFIRM_RESTART_AFTER_SEC = 60;
@@ -32,6 +31,7 @@ const $ = (id) => document.getElementById(id);
 const canvas = $('board');
 const ctx = canvas.getContext('2d');
 const mod = (a, n) => ((a % n) + n) % n;
+const effects = createEffects();
 
 const store = {
   read() {
@@ -50,6 +50,8 @@ const state = {
   pick: null, // 시작 화면에서 고른 모드·난이도
   abilities: emptyAbilities(),
   aiming: null, // 대상을 고르는 중인 능력
+  aimFirst: -1, // 양자역학: 먼저 고른 칸
+  busy: false, // 핵전쟁 연출 중에는 입력을 막는다
   pauseAt: 0, // 능력 고르기 창이 떠 있는 동안 시계를 멈춘 때
   history: normalizeHistory(saved.history),
   recordsLevel: null,
@@ -75,7 +77,10 @@ function requestRender() {
   if (state.frame) return;
   state.frame = requestAnimationFrame(() => {
     state.frame = 0;
-    draw(ctx, state.view, state.game, state.hover, aimCells());
+    draw(ctx, state.view, state.game, state.hover, flow.aimCells(), state.abilities.counts);
+    const [dx, dy] = effects.shake();
+    canvas.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : '';
+    if (effects.draw(ctx, state.view)) requestRender();
   });
 }
 
@@ -151,7 +156,7 @@ function updateHud() {
   $('flags').textContent = b ? b.mineCount - b.flags : 0;
   $('time').textContent = formatClock(state.pendingResume ? state.pendingResume.elapsed : elapsedSeconds());
   $('gameLabel').textContent = fullLabel(state.level, state.mode);
-  renderAbilityBar($('abilityBar'), state.mode === 'ability' ? state.abilities.inv : [], state.aiming, useAbility);
+  renderAbilityBar($('abilityBar'), state.mode === 'ability' ? state.abilities.inv : [], state.aiming, flow.useAbility);
   canvas.classList.toggle('aiming', Boolean(state.aiming));
   $('flagMode').setAttribute('aria-pressed', String(state.flagMode));
   $('flagMode').textContent = state.flagMode ? '🚩' : '⛏';
@@ -173,13 +178,12 @@ function installGame(level, layout, board, mode = state.mode, abilities = emptyA
   state.mode = mode;
   state.abilities = abilities;
   state.aiming = null;
+  state.aimFirst = -1;
   state.pauseAt = 0;
   state.pendingResume = null;
-  hideOffer();
+  flow.hideOffer();
   save();
-  const layer = createLayer(board);
-  paintLayer(layer, board);
-  state.game = { layout, board, layer, coast: buildCoastPath(state.polygons, layout) };
+  state.game = { layout, board, ...boardLayers(board, layout, abilities.look) };
   stopTimer();
   clearTimeout(state.resultTimer);
   state.startTime = 0;
@@ -187,6 +191,21 @@ function installGame(level, layout, board, mode = state.mode, abilities = emptyA
   state.hover = -1;
   hideResult();
   hideRecords();
+}
+
+/** 바탕 그림과 해안선. 핵전쟁 뒤에는 대륙이 없어 해안선도 없다 */
+function boardLayers(board, layout, look) {
+  const layer = createLayer(board, look);
+  paintLayer(layer, board);
+  return { layer, coast: look === 'nuke' ? null : buildCoastPath(state.polygons, layout) };
+}
+
+/** 사건으로 판만 바꾼다 (시계·능력은 그대로) */
+function swapBoard(board, look) {
+  state.abilities = { ...state.abilities, look, counts: [] };
+  state.game = { ...state.game, board, ...boardLayers(board, state.game.layout, look) };
+  updateHud();
+  requestRender();
 }
 
 function newGame(level = state.level, mode = state.mode) {
@@ -216,7 +235,7 @@ function writeSavedGame() {
   clearTimeout(state.saveTimer);
   state.saveTimer = 0;
   const g = state.game;
-  if (!g || g.board.state !== 'playing' || !state.startTime) return;
+  if (!g || g.board.state !== 'playing' || !state.startTime || state.busy) return; // 핵전쟁 연출 중에는 판이 바뀌는 중이라 저장하지 않는다
   const data = snapshot({
     mode: state.mode,
     abilities: state.abilities,
@@ -269,7 +288,7 @@ function resumeGame() {
   state.startTime = performance.now() - saved.elapsed * 1000;
   state.timer = setInterval(updateHud, 250);
   updateHud();
-  checkMilestones();
+  flow.checkMilestones();
 }
 
 /* ---------- 시작 화면 ---------- */
@@ -293,8 +312,9 @@ function showStartView() {
 
 /** 시작 화면을 연다. 하던 판은 멈추고 저장해 두었다가 팻말로 이어 간다 */
 function openStart() {
-  if (isStartOpen()) return;
+  if (isStartOpen() || state.busy) return;
   state.aiming = null;
+  state.aimFirst = -1;
   hideResult();
   hideRecords();
   writeSavedGame();
@@ -317,7 +337,7 @@ function continueGame() {
   if (state.pendingResume) resumeGame();
   else {
     resumeClock();
-    checkMilestones();
+    flow.checkMilestones();
   }
 }
 
@@ -337,9 +357,10 @@ function setPick(change) {
 }
 
 function finish(won) {
+  if (!won) writeLostGame();
   state.endTime = performance.now();
   state.aiming = null;
-  hideOffer();
+  flow.hideOffer();
   stopTimer();
   clearSavedGame();
   const time = elapsedSeconds();
@@ -361,12 +382,14 @@ function finish(won) {
 function act(i, wantFlag) {
   const b = state.game?.board;
   if (!b || i < 0) return;
+  if (state.busy) return;
   if (state.aiming) {
-    aimAt(i);
+    flow.aimAt(i);
     return;
   }
   if (!b.ocean[i]) return;
-  const options = { shield: state.mode === 'ability' && usesOf(state.abilities.inv, 'shield') > 0 };
+  const guard = flow.guardKey();
+  const options = { shield: Boolean(guard) };
   let outcome = 'none';
   if (b.open[i]) outcome = chord(b, i, options);
   else if (wantFlag) toggleFlag(b, i);
@@ -377,11 +400,7 @@ function act(i, wantFlag) {
     save();
     state.timer = setInterval(updateHud, 250);
   }
-  if (outcome === 'shielded') {
-    spend('shield');
-    showToast(`${ABILITIES.shield.icon} 방패가 지뢰를 막았습니다`, 'info');
-    if (navigator.vibrate) navigator.vibrate([40, 40, 40]);
-  }
+  if (outcome === 'shielded') outcome = flow.onGuarded(guard);
   afterMove(outcome);
 }
 
@@ -394,16 +413,10 @@ function afterMove(outcome) {
   paintLayer(state.game.layer, b);
   updateHud();
   requestRender();
-  checkMilestones();
+  flow.checkMilestones();
 }
 
 /* ---------- 능력 모드 ---------- */
-
-function spend(key) {
-  state.abilities = { ...state.abilities, inv: spendAbility(state.abilities.inv, key) };
-}
-
-const isOfferOpen = () => $('offer').classList.contains('show');
 
 function pauseClock() {
   if (!state.startTime || state.pauseAt || state.endTime) return;
@@ -419,121 +432,66 @@ function resumeClock() {
   updateHud();
 }
 
-/** 새로 넘은 단계가 있으면 고르기 창을 띄운다 (한 번에 여러 단계를 넘으면 하나씩 차례로) */
-function checkMilestones() {
-  if (state.mode !== 'ability' || state.pendingResume || isOfferOpen() || isStartOpen()) return;
-  const b = state.game?.board;
-  if (!b || milestonesReached(b) <= state.abilities.granted) return;
-  const offer = state.abilities.offer ?? offerChoices();
-  state.abilities = { ...state.abilities, offer };
-  state.aiming = null;
-  pauseClock();
-  const stage = MILESTONES[state.abilities.granted];
-  $('offerStage').textContent = stage === 0 ? '첫 능력' : `찾아낸 바다 ${Math.floor(stage * 100)}% 달성`;
-  renderOffer($('offerList'), offer, pickAbility);
-  $('offer').classList.add('show');
-  $('offerList').querySelector('button')?.focus();
+/** 진 판을 남겨 둔다 (였던것으로 이어 하기) */
+function writeLostGame() {
+  const g = state.game;
+  if (!g || !state.startTime) return;
+  try {
+    const data = lostSnapshot({
+      mode: state.mode, abilities: state.abilities, level: state.level, layout: g.layout, board: g.board,
+      elapsed: elapsedSeconds(), view: state.view, savedAt: Date.now(),
+    }, g.board.exploded);
+    localStorage.setItem(LOST_KEY, JSON.stringify(data));
+  } catch (err) {
+    console.error('lost game save failed', err);
+  }
+}
+
+function readLostGame() {
+  try {
+    return restoreLost(JSON.parse(localStorage.getItem(LOST_KEY)));
+  } catch {
+    return null;
+  }
+}
+
+function clearLostGame() {
+  try { localStorage.removeItem(LOST_KEY); } catch { /* 지울 것이 없다 */ }
+}
+
+/** 진 판을 능력 모드로 깔고 그 판의 시간부터 다시 센다 */
+function installLost(lost, abilities) {
+  installGame(lost.level, lost.layout, lost.board, 'ability', abilities);
+  fitView();
+  if (lost.view) {
+    Object.assign(state.view, lost.view);
+    clampView();
+  }
+  state.startTime = performance.now() - lost.elapsed * 1000;
+  state.timer = setInterval(updateHud, 250);
   scheduleSave();
-}
-
-function pickAbility(key) {
-  const a = state.abilities;
-  if (!a.offer?.includes(key)) return;
-  state.abilities = { inv: addAbility(a.inv, key), granted: a.granted + 1, offer: null, picks: [...a.picks, key] };
-  hideOffer();
-  resumeClock();
-  scheduleSave();
   updateHud();
-  checkMilestones();
 }
 
-function hideOffer() {
-  $('offer').classList.remove('show');
-}
-
-function useAbility(key) {
-  const b = state.game?.board;
-  if (!b || b.state !== 'playing' || isOfferOpen() || usesOf(state.abilities.inv, key) <= 0) return;
-  const { target } = ABILITIES[key];
-  if (target === 'passive') return;
-  if (target === 'instant') {
-    useBeacon(key);
-    return;
-  }
-  state.aiming = state.aiming === key ? null : key;
-  updateHud();
-  requestRender();
-}
-
-function cancelAim() {
-  state.aiming = null;
-  updateHud();
-  requestRender();
-}
-
-/** 대상 고르기 중 i 칸을 눌렀을 때. 효과가 없는 칸이면 쓰지 않는다 */
-function aimAt(i) {
-  const b = state.game.board;
-  const key = state.aiming;
-  const outcome = key === 'scan' ? scan(b, i) : probe(b, i);
-  if (outcome === 'none') return;
-  spend(key);
-  state.aiming = null;
-  if (outcome === 'flagged' || outcome === 'confirmed') showToast(`${ABILITIES[key].icon} 지뢰가 있습니다`, 'info');
-  afterMove(outcome === 'won' ? 'won' : 'opened');
-}
-
-/** 화면에 보이는 칸, 화면 가운데에서 가까운 순 */
-function visibleCellsByDistance() {
-  const v = state.view;
-  const { cols, rows } = state.game.layout;
-  const c0 = Math.floor(-v.panX / v.z);
-  const c1 = Math.min(c0 + cols, Math.ceil((v.w - v.panX) / v.z));
-  const r0 = Math.max(0, Math.floor(-v.panY / v.z));
-  const r1 = Math.min(rows, Math.ceil((v.h - v.panY) / v.z));
-  const cx = (v.w / 2 - v.panX) / v.z;
-  const cy = (v.h / 2 - v.panY) / v.z;
-  const out = [];
-  for (let r = r0; r < r1; r += 1) {
-    for (let sc = c0; sc < c1; sc += 1) out.push({ i: r * cols + mod(sc, cols), d: (sc + 0.5 - cx) ** 2 + (r + 0.5 - cy) ** 2 });
-  }
-  return out.sort((a, b) => a.d - b.d).map((o) => o.i);
-}
-
-function useBeacon(key) {
-  const b = state.game.board;
-  const target = beaconTarget(b, visibleCellsByDistance());
-  if (target < 0) {
-    showToast('화면 안에 열 수 있는 바다가 없습니다', 'info');
-    return;
-  }
-  const outcome = reveal(b, target);
-  if (outcome === 'none') return;
-  spend(key);
-  state.aiming = null;
-  focusCell(target);
-  afterMove(outcome);
-}
-
-/** 칸이 너무 작게 보이면 그 칸을 가운데로 확대한다 */
-function focusCell(i) {
-  const v = state.view;
-  if (v.z >= MIN_PLAY_PX) return;
-  const { cols } = state.game.layout;
-  v.z = TAP_ZOOM_PX;
-  v.panX = v.w / 2 - ((i % cols) + 0.5) * v.z;
-  v.panY = v.h / 2 - (Math.floor(i / cols) + 0.5) * v.z;
-  clampView();
-}
-
-/** 대상 고르기 중 마우스가 가리키는 칸에 효과가 닿을 칸들 */
-function aimCells() {
-  const b = state.game?.board;
-  if (!state.aiming) return null;
-  if (!b || state.hover < 0) return [];
-  if (state.aiming === 'scan') return scanCells(b, state.hover);
-  return b.ocean[state.hover] && !b.open[state.hover] ? [state.hover] : [];
-}
+const flow = createAbilityFlow({
+  state,
+  $,
+  effects,
+  afterMove: (outcome) => afterMove(outcome),
+  refresh: () => { updateHud(); requestRender(); },
+  pauseClock,
+  resumeClock,
+  scheduleSave: () => scheduleSave(),
+  showToast: (text, kind) => showToast(text, kind),
+  isBlocked: () => isStartOpen(),
+  swapBoard,
+  showWorld: () => fitView(),
+  landMask: () => buildOceanMask(state.polygons, state.game.layout).map((v) => (v ? 0 : 1)),
+  density: () => LEVELS[state.level].density,
+  readLost: readLostGame,
+  clearLost: clearLostGame,
+  installLost,
+});
 
 const levelLabel = (level, mode) => (mode === 'basic' ? LEVELS[level].label : `${MODES[mode].label} · ${LEVELS[level].label}`);
 const fullLabel = (level, mode) => `${MODES[mode].label} · ${LEVELS[level].label}`;
@@ -665,7 +623,7 @@ function onPointerUp(e) {
     clearTimeout(gesture.timer);
     const { x, y } = gesture.start;
     if (state.view.z < MIN_PLAY_PX) zoomAt(x, y, TAP_ZOOM_PX / state.view.z);
-    else if (gesture.button === 2 && state.aiming) cancelAim();
+    else if (gesture.button === 2 && state.aiming) flow.cancelAim();
     else if (gesture.button === 2) act(cellAt(x, y), true);
     else if (gesture.button === 1) act(cellAt(x, y), false);
     else act(cellAt(x, y), state.flagMode);
@@ -691,9 +649,10 @@ function onWheel(e) {
 }
 
 function onKey(e) {
-  if (isOfferOpen()) {
+  if (state.busy) return;
+  if (flow.isOfferOpen()) {
     const pick = state.abilities.offer?.[Number(e.key) - 1];
-    if (pick) { e.preventDefault(); pickAbility(pick); }
+    if (pick) { e.preventDefault(); flow.pickAbility(pick); }
     return;
   }
   if (isStartOpen()) {
@@ -713,8 +672,8 @@ function onKey(e) {
   }
   const k = e.key.toLowerCase();
   const slot = state.mode === 'ability' && /^[1-9]$/.test(e.key) ? state.abilities.inv[Number(e.key) - 1] : null;
-  if (slot) { e.preventDefault(); useAbility(slot.key); return; }
-  if (e.key === 'Escape' && state.aiming) { cancelAim(); return; }
+  if (slot) { e.preventDefault(); flow.useAbility(slot.key); return; }
+  if (e.key === 'Escape' && state.aiming) { flow.cancelAim(); return; }
   if (k === 'r' || e.key === 'F2') { e.preventDefault(); openStart(); }
   else if (k === 'h') openRecords();
   else if (k === 'f') { state.flagMode = !state.flagMode; updateHud(); }

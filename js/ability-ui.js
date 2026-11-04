@@ -39,15 +39,17 @@ export function renderAbilityBar(bar, inv, aiming, onUse) {
  * @param {HTMLElement} list
  * @param {string[]} choices
  * @param {(key:string) => void} onPick
+ * @param {(key:string) => number} gainOf 받으면 늘어날 횟수
  */
-export function renderOffer(list, choices, onPick) {
+export function renderOffer(list, choices, onPick, gainOf = (key) => ABILITIES[key].uses) {
   list.replaceChildren();
   choices.forEach((key, idx) => {
     const def = ABILITIES[key];
-    const btn = el('button', 'offer-item');
+    const isEvent = def.kind === 'event';
+    const btn = el('button', `offer-item${isEvent ? ' event' : ''}`);
     btn.dataset.key = key;
     const text = el('span', 'of-text');
-    text.append(el('b', '', `${def.name} ×${def.uses}`), el('small', '', def.desc));
+    text.append(el('b', '', isEvent ? def.name : `${def.name} ×${gainOf(key)}`), el('small', '', def.desc));
     btn.append(el('span', 'of-key', String(idx + 1)), el('span', 'of-icon', def.icon), text);
     btn.addEventListener('click', () => onPick(key));
     list.append(btn);

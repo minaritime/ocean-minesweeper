@@ -89,12 +89,17 @@ export function createBoard(ocean, cols, rows, density) {
     opened: 0,
     flags: 0,
     exploded: -1,
+    guarded: -1, // 방패·가시갑옷이 막은 마지막 지뢰 칸
   };
 }
 
 /** 첫 칸과 그 주변에는 지뢰를 두지 않는다 */
 export function placeMines(board, first, rng = Math.random) {
-  const safe = new Set([first, ...oceanNeighbors(board, first)]);
+  placeMinesAvoiding(board, new Set([first, ...oceanNeighbors(board, first)]), rng);
+}
+
+/** safe 에 든 칸을 빼고 지뢰를 무작위로 둔다 */
+export function placeMinesAvoiding(board, safe, rng = Math.random) {
   const candidates = [];
   for (let i = 0; i < board.ocean.length; i += 1) {
     if (board.ocean[i] && !safe.has(i)) candidates.push(i);
@@ -152,6 +157,7 @@ export function reveal(board, i, rng = Math.random, { shield = false } = {}) {
   if (board.mine[i] && shield) {
     board.flag[i] = 1;
     board.flags += 1;
+    board.guarded = i;
     return 'shielded';
   }
   if (board.mine[i]) {
@@ -161,6 +167,12 @@ export function reveal(board, i, rng = Math.random, { shield = false } = {}) {
   }
   floodOpen(board, i);
   return finishIfWon(board);
+}
+
+/** 능력으로 판이 바뀐 뒤: 다 풀렸으면 'won', 아니면 'done' */
+export function settle(board) {
+  if (board.state !== 'playing') return 'none';
+  return finishIfWon(board) === 'won' ? 'won' : 'done';
 }
 
 /** 열린 숫자 칸 주변 깃발 수가 숫자와 같으면 나머지 이웃을 한꺼번에 연다 */

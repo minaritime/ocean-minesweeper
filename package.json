@@ -2,5 +2,5 @@
   "name": "ocean-minesweeper",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test tests/abilities.test.mjs tests/game.test.mjs tests/records.test.mjs tests/geo.test.mjs tests/save.test.mjs" }
+  "scripts": { "test": "node --test tests/abilities.test.mjs tests/game.test.mjs tests/records.test.mjs tests/geo.test.mjs tests/save.test.mjs tests/events.test.mjs" }
 }

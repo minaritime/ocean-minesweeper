@@ -6,6 +6,10 @@ const COLORS = {
   deep: '#082233',
   land: ['#7f9d5e', '#789659'],
   closed: ['#4aa6da', '#429dd0'],
+  wallSea: ['#1d5a80', '#1a5578'], // 국국가가: 바다가 벽
+  closedLand: ['#8db667', '#84ad5f'], // 국국가가: 대륙이 놀이판
+  count: '#ffd166',
+  countInk: '#3a2400',
   hover: 'rgba(255, 255, 255, 0.35)',
   aim: 'rgba(255, 179, 71, 0.55)',
   aimEdge: '#ffb347',
@@ -34,38 +38,42 @@ function packColor(hex) {
 const PACKED = {
   land: COLORS.land.map(packColor),
   closed: COLORS.closed.map(packColor),
+  wallSea: COLORS.wallSea.map(packColor),
+  closedLand: COLORS.closedLand.map(packColor),
   opened: COLORS.opened.map(packColor),
   exploded: packColor(COLORS.exploded),
   flagCell: packColor(COLORS.flagCell),
   mine: packColor(COLORS.mine),
 };
 
-export function createLayer(board) {
+/** look: 'sea' | 'land' | 'nuke' (land 면 대륙이 놀이판, 바다가 벽) */
+export function createLayer(board, look = 'sea') {
   const canvas = document.createElement('canvas');
   canvas.width = board.cols;
   canvas.height = board.rows;
   const ctx = canvas.getContext('2d');
   const image = ctx.createImageData(board.cols, board.rows);
-  return { canvas, ctx, image, pixels: new Uint32Array(image.data.buffer) };
+  return { canvas, ctx, image, pixels: new Uint32Array(image.data.buffer), look };
 }
 
-function cellPixel(board, i, parity, lost) {
-  if (!board.ocean[i]) return PACKED.land[parity];
+function cellPixel(board, i, parity, lost, land) {
+  if (!board.ocean[i]) return land ? PACKED.wallSea[parity] : PACKED.land[parity];
   if (board.open[i]) return PACKED.opened[parity];
   if (lost && i === board.exploded) return PACKED.exploded;
   if (lost && board.mine[i] && !board.flag[i]) return PACKED.mine;
   if (board.flag[i]) return PACKED.flagCell;
-  return PACKED.closed[parity];
+  return land ? PACKED.closedLand[parity] : PACKED.closed[parity];
 }
 
 /** 판 상태가 바뀐 뒤 한 번 호출해 바탕 그림을 새로 칠한다 */
 export function paintLayer(layer, board) {
   const { cols, rows } = board;
   const lost = board.state === 'lost';
+  const land = layer.look === 'land';
   const px = layer.pixels;
   for (let r = 0; r < rows; r += 1) {
     const base = r * cols;
-    for (let c = 0; c < cols; c += 1) px[base + c] = cellPixel(board, base + c, (r + c) & 1, lost);
+    for (let c = 0; c < cols; c += 1) px[base + c] = cellPixel(board, base + c, (r + c) & 1, lost, land);
   }
   layer.ctx.putImageData(layer.image, 0, 0);
 }
@@ -93,7 +101,7 @@ function drawLayer(ctx, view, game) {
 }
 
 function drawCoast(ctx, view, game) {
-  if (view.z < COAST_MIN_PX) return;
+  if (!game.coast || view.z < COAST_MIN_PX) return;
   const { cols, rows } = game.board;
   const span = cols * view.z;
   const { dpr } = view;
@@ -228,8 +236,47 @@ function drawAim(ctx, view, board, aim) {
   for (const i of aim) fillCell(ctx, view, board, i, COLORS.aim, COLORS.aimEdge);
 }
 
-/** aim: 능력 대상 고르기 중이면 효과가 닿을 칸 목록, 아니면 null */
-export function draw(ctx, view, game, hover, aim = null) {
+/** 화면에 보이는 모든 바퀴 위치의 x (칸 i 의 왼쪽 끝) */
+function wrapXs(view, cols, i) {
+  const span = cols * view.z;
+  let x = view.panX + (i % cols) * view.z;
+  x -= Math.floor(x / span) * span;
+  const out = [];
+  for (x -= span; x < view.w + span; x += span) out.push(x);
+  return out;
+}
+
+/** 세기: 5×5 테두리와 지뢰 수 */
+function drawCounts(ctx, view, board, counts) {
+  const z = view.z;
+  ctx.save();
+  ctx.setLineDash([Math.max(2, z * 0.3), Math.max(2, z * 0.2)]);
+  ctx.lineWidth = Math.max(1.5, z * 0.08);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const radius = Math.max(9, z * 0.55);
+  ctx.font = `800 ${Math.round(radius * 1.15)}px system-ui, sans-serif`;
+  for (const { i, n } of counts) {
+    const y = view.panY + Math.floor(i / board.cols) * z;
+    for (const x of wrapXs(view, board.cols, i)) {
+      ctx.strokeStyle = COLORS.count;
+      ctx.strokeRect(x - 2 * z, y - 2 * z, 5 * z, 5 * z);
+      ctx.fillStyle = COLORS.count;
+      ctx.beginPath();
+      ctx.arc(x + z / 2, y + z / 2, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = COLORS.countInk;
+      ctx.fillText(String(n), x + z / 2, y + z / 2 + radius * 0.06);
+    }
+  }
+  ctx.restore();
+}
+
+/**
+ * aim: 능력 대상 고르기 중이면 효과가 닿을 칸 목록, 아니면 null
+ * counts: 세기로 알아낸 [{ i, n }]
+ */
+export function draw(ctx, view, game, hover, aim = null, counts = []) {
   const { dpr } = view;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = COLORS.deep;
@@ -238,6 +285,7 @@ export function draw(ctx, view, game, hover, aim = null) {
   drawLayer(ctx, view, game);
   drawCoast(ctx, view, game);
   drawMarks(ctx, view, game.board);
+  if (counts.length) drawCounts(ctx, view, game.board, counts);
   if (aim) drawAim(ctx, view, game.board, aim);
   else drawHover(ctx, view, game.board, hover);
 }

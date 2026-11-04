@@ -1,7 +1,7 @@
 // 이어하기: 진행 중인 판 하나를 브라우저에 저장하고 되살린다.
 
 import { LEVELS, MODES, packCells, unpackBoard } from './game.js';
-import { ABILITIES, MILESTONES, normalizeInventory } from './abilities.js';
+import { ABILITIES, MILESTONES, LOOKS, normalizeInventory } from './abilities.js';
 
 export const SAVE_VERSION = 2;
 const READABLE_VERSIONS = [1, 2];
@@ -25,7 +25,10 @@ export function snapshot({ mode = 'basic', abilities = emptyAbilities(), level, 
   return {
     v: SAVE_VERSION,
     mode,
-    abilities: { inv: abilities.inv, granted: abilities.granted, offer: abilities.offer, picks: abilities.picks },
+    abilities: {
+      inv: abilities.inv, granted: abilities.granted, offer: abilities.offer, picks: abilities.picks,
+      look: abilities.look, counts: abilities.counts,
+    },
     level,
     layout: { cols: layout.cols, rows: layout.rows, cellDeg: layout.cellDeg, rot: layout.rot, latTop: layout.latTop },
     cells: bytesToBase64(packCells(board)),
@@ -37,10 +40,15 @@ export function snapshot({ mode = 'basic', abilities = emptyAbilities(), level, 
 
 const isNum = (x) => typeof x === 'number' && Number.isFinite(x);
 
-/** 능력 모드 진행: 보관함, 받은 단계 수, 고르던 후보(없으면 null), 고른 능력 순서 */
+/**
+ * 능력 모드 진행: 보관함, 받은 단계 수, 고르던 후보(없으면 null), 고른 능력 순서,
+ * 지도 모양(sea | land | nuke), 세기로 알아낸 칸 [{ i, n }]
+ */
 export function emptyAbilities() {
-  return { inv: [], granted: 0, offer: null, picks: [] };
+  return { inv: [], granted: 0, offer: null, picks: [], look: 'sea', counts: [] };
 }
+
+const isCount = (c) => c && Number.isInteger(c.i) && c.i >= 0 && Number.isInteger(c.n) && c.n >= 0;
 
 const isAbilityList = (x) => Array.isArray(x) && x.length > 0 && x.every((k) => typeof k === 'string' && ABILITIES[k]);
 
@@ -52,6 +60,8 @@ function restoreAbilities(raw) {
     granted,
     offer: isAbilityList(raw.offer) ? [...raw.offer] : null,
     picks: Array.isArray(raw.picks) ? raw.picks.filter((k) => ABILITIES[k]) : [],
+    look: LOOKS.includes(raw.look) ? raw.look : 'sea',
+    counts: Array.isArray(raw.counts) ? raw.counts.filter(isCount).map((c) => ({ i: c.i, n: c.n })) : [],
   };
 }
 
@@ -66,9 +76,28 @@ export function restore(raw) {
   try {
     const board = unpackBoard(base64ToBytes(raw.cells), l.cols, l.rows);
     const view = raw.view && [raw.view.z, raw.view.panX, raw.view.panY].every(isNum) ? raw.view : null;
-    const abilities = mode === 'basic' ? emptyAbilities() : restoreAbilities(raw.abilities);
+    const restored = mode === 'basic' ? emptyAbilities() : restoreAbilities(raw.abilities);
+    const abilities = { ...restored, counts: restored.counts.filter((c) => c.i < board.ocean.length) };
     return { mode, abilities, level: raw.level, layout: { ...l }, board, elapsed: raw.elapsed, view, savedAt: raw.savedAt };
   } catch {
     return null;
   }
+}
+
+/** 진 판: 이어하기 저장과 같은 모양에 밟은 지뢰 칸을 더한다 (였던것) */
+export function lostSnapshot(args, exploded) {
+  return { ...snapshot(args), exploded };
+}
+
+/** 진 판을 되살리고 밟은 지뢰에 깃발을 꽂는다. 망가졌으면 null */
+export function restoreLost(raw) {
+  const saved = restore(raw);
+  if (!saved) return null;
+  const e = raw.exploded;
+  if (!Number.isInteger(e) || e < 0 || e >= saved.board.ocean.length || !saved.board.mine[e]) return null;
+  if (!saved.board.flag[e]) {
+    saved.board.flag[e] = 1;
+    saved.board.flags += 1;
+  }
+  return saved;
 }
