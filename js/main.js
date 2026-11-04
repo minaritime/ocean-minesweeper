@@ -2,7 +2,7 @@ import { LEVELS, MODES, createBoard, keepLargestOcean, reveal, chord, toggleFlag
 import { decodeLand, makeLayout, buildOceanMask, buildCoastPath, carveStraits } from './geo.js';
 import { draw, createLayer, paintLayer } from './render.js';
 import {
-  normalizeHistory, addPlay, addClear, summarize, rankOf, formatDuration, formatClock, formatDate, formatPercent,
+  normalizeHistory, addPlay, addClear, summarize, rankOf, formatDuration, formatClock, formatPercent,
 } from './records.js';
 import { snapshot, restore, emptyAbilities } from './save.js';
 import {
@@ -11,6 +11,7 @@ import {
 } from './abilities.js';
 import { renderAbilityBar, renderOffer } from './ability-ui.js';
 import { renderRecords as renderRecordsView } from './records-ui.js';
+import { buildStart, renderStart } from './start-ui.js';
 
 const LONG_PRESS_MS = 380;
 const DRAG_THRESHOLD = 7;
@@ -46,6 +47,7 @@ const state = {
   polygons: null,
   level: LEVELS[saved.level] ? saved.level : 'easy',
   mode: MODES[saved.mode] ? saved.mode : 'basic',
+  pick: null, // 시작 화면에서 고른 모드·난이도
   abilities: emptyAbilities(),
   aiming: null, // 대상을 고르는 중인 능력
   pauseAt: 0, // 능력 고르기 창이 떠 있는 동안 시계를 멈춘 때
@@ -147,13 +149,8 @@ function elapsedSeconds() {
 function updateHud() {
   const b = state.game?.board;
   $('flags').textContent = b ? b.mineCount - b.flags : 0;
-  $('time').textContent = formatClock(elapsedSeconds());
-  document.querySelectorAll('header .levels button[data-level]').forEach((btn) => {
-    btn.setAttribute('aria-pressed', String(btn.dataset.level === state.level));
-  });
-  document.querySelectorAll('header .modes button').forEach((btn) => {
-    btn.setAttribute('aria-pressed', String(btn.dataset.mode === state.mode));
-  });
+  $('time').textContent = formatClock(state.pendingResume ? state.pendingResume.elapsed : elapsedSeconds());
+  $('gameLabel').textContent = fullLabel(state.level, state.mode);
   renderAbilityBar($('abilityBar'), state.mode === 'ability' ? state.abilities.inv : [], state.aiming, useAbility);
   canvas.classList.toggle('aiming', Boolean(state.aiming));
   $('flagMode').setAttribute('aria-pressed', String(state.flagMode));
@@ -190,7 +187,6 @@ function installGame(level, layout, board, mode = state.mode, abilities = emptyA
   state.hover = -1;
   hideResult();
   hideRecords();
-  hideResume();
 }
 
 function newGame(level = state.level, mode = state.mode) {
@@ -253,8 +249,8 @@ function readSavedGame() {
   }
 }
 
-/** 저장된 판을 멈춘 채로 깔아 두고 고르는 창을 띄운다 */
-function offerResume(saved) {
+/** 저장된 판을 멈춘 채로 깔아 둔다 (시작 화면의 이어하기 팻말로 이어 간다) */
+function installSaved(saved) {
   installGame(saved.level, saved.layout, saved.board, saved.mode, saved.abilities);
   state.pendingResume = saved;
   fitView();
@@ -263,39 +259,81 @@ function offerResume(saved) {
     clampView();
   }
   updateHud();
-  $('time').textContent = formatClock(saved.elapsed);
   requestRender();
-  $('resumeLevel').textContent = levelLabel(saved.level, saved.mode);
-  $('resumeTime').textContent = formatDuration(saved.elapsed);
-  $('resumeProgress').textContent = formatPercent(progress(saved.board));
-  $('resumeSaved').textContent = Number.isFinite(saved.savedAt) ? formatDate(saved.savedAt) : '';
-  $('resume').classList.add('show');
-  $('resumeGo').focus();
 }
 
 function resumeGame() {
   const saved = state.pendingResume;
   if (!saved) return;
   state.pendingResume = null;
-  hideResume();
   state.startTime = performance.now() - saved.elapsed * 1000;
   state.timer = setInterval(updateHud, 250);
   updateHud();
   checkMilestones();
 }
 
-function hideResume() {
-  $('resume').classList.remove('show');
+/* ---------- 시작 화면 ---------- */
+
+const isStartOpen = () => $('start').classList.contains('show');
+
+/** 이어 갈 판: 저장해 둔 판이나, 시작 화면을 열기 전까지 하던 판 */
+function continuable() {
+  const saved = state.pendingResume;
+  if (saved) return { level: saved.level, mode: saved.mode, elapsed: saved.elapsed, board: saved.board };
+  const b = state.game?.board;
+  if (!b || b.state !== 'playing' || !state.startTime) return null;
+  return { level: state.level, mode: state.mode, elapsed: elapsedSeconds(), board: b };
 }
 
-const isResumeOpen = () => $('resume').classList.contains('show');
+function showStartView() {
+  const c = continuable();
+  const continueText = c && `${fullLabel(c.level, c.mode)} · ${formatClock(c.elapsed)} · 바다 ${formatPercent(progress(c.board))}`;
+  renderStart({ pick: state.pick, continueText });
+}
 
-/** 오래 진행한 판을 실수로 버리지 않도록 한 번 묻는다 */
-function requestNewGame(level = state.level, mode = state.mode) {
-  const playing = state.game?.board.state === 'playing';
-  if (playing && elapsedSeconds() > CONFIRM_RESTART_AFTER_SEC
-    && !window.confirm(`${formatClock(elapsedSeconds())} 동안 진행한 판입니다. 버리고 새로 시작할까요?`)) return;
-  newGame(level, mode);
+/** 시작 화면을 연다. 하던 판은 멈추고 저장해 두었다가 팻말로 이어 간다 */
+function openStart() {
+  if (isStartOpen()) return;
+  state.aiming = null;
+  hideResult();
+  hideRecords();
+  writeSavedGame();
+  pauseClock();
+  if (!state.pick) state.pick = { level: state.level, mode: state.mode };
+  showStartView();
+  $('start').classList.add('show');
+  $('startGo').focus();
+  updateHud();
+  requestRender();
+}
+
+function hideStart() {
+  $('start').classList.remove('show');
+}
+
+function continueGame() {
+  if (!continuable()) return;
+  hideStart();
+  if (state.pendingResume) resumeGame();
+  else {
+    resumeClock();
+    checkMilestones();
+  }
+}
+
+/** 고른 모드·난이도로 새 판. 오래 진행한 판을 실수로 버리지 않도록 한 번 묻는다 */
+function startNew() {
+  const c = continuable();
+  if (c && c.elapsed > CONFIRM_RESTART_AFTER_SEC
+    && !window.confirm(`${formatClock(c.elapsed)} 동안 진행한 판입니다. 버리고 새로 시작할까요?`)) return;
+  hideStart();
+  state.pendingResume = null;
+  newGame(state.pick.level, state.pick.mode);
+}
+
+function setPick(change) {
+  state.pick = { ...state.pick, ...change };
+  showStartView();
 }
 
 function finish(won) {
@@ -383,7 +421,7 @@ function resumeClock() {
 
 /** 새로 넘은 단계가 있으면 고르기 창을 띄운다 (한 번에 여러 단계를 넘으면 하나씩 차례로) */
 function checkMilestones() {
-  if (state.mode !== 'ability' || state.pendingResume || isOfferOpen()) return;
+  if (state.mode !== 'ability' || state.pendingResume || isOfferOpen() || isStartOpen()) return;
   const b = state.game?.board;
   if (!b || milestonesReached(b) <= state.abilities.granted) return;
   const offer = state.abilities.offer ?? offerChoices();
@@ -498,6 +536,7 @@ function aimCells() {
 }
 
 const levelLabel = (level, mode) => (mode === 'basic' ? LEVELS[level].label : `${MODES[mode].label} · ${LEVELS[level].label}`);
+const fullLabel = (level, mode) => `${MODES[mode].label} · ${LEVELS[level].label}`;
 
 /* ---------- 결과창 ---------- */
 
@@ -657,8 +696,8 @@ function onKey(e) {
     if (pick) { e.preventDefault(); pickAbility(pick); }
     return;
   }
-  if (isResumeOpen()) {
-    if (e.key === 'Enter') { e.preventDefault(); resumeGame(); }
+  if (isStartOpen()) {
+    if (e.key === 'Escape') continueGame();
     return;
   }
   if (isRecordsOpen()) {
@@ -676,12 +715,18 @@ function onKey(e) {
   const slot = state.mode === 'ability' && /^[1-9]$/.test(e.key) ? state.abilities.inv[Number(e.key) - 1] : null;
   if (slot) { e.preventDefault(); useAbility(slot.key); return; }
   if (e.key === 'Escape' && state.aiming) { cancelAim(); return; }
-  if (k === 'r' || e.key === 'F2') { e.preventDefault(); requestNewGame(); }
+  if (k === 'r' || e.key === 'F2') { e.preventDefault(); openStart(); }
   else if (k === 'h') openRecords();
   else if (k === 'f') { state.flagMode = !state.flagMode; updateHud(); }
   else if (e.key === '+' || e.key === '=') zoomAt(state.view.w / 2, state.view.h / 2, 1.25);
   else if (e.key === '-') zoomAt(state.view.w / 2, state.view.h / 2, 0.8);
   else if (e.key === '0') fitView();
+}
+
+function bindStart() {
+  buildStart({ modes: MODES, levels: LEVELS, onPick: setPick });
+  $('startGo').addEventListener('click', startNew);
+  $('continueGo').addEventListener('click', continueGame);
 }
 
 function bindUi() {
@@ -697,12 +742,7 @@ function bindUi() {
   canvas.addEventListener('click', () => {}); // 지도도 눌리는 대상임을 알려 터치 보정이 버튼으로 새지 않게 한다
   window.addEventListener('resize', resizeCanvas);
   window.addEventListener('keydown', onKey);
-  document.querySelectorAll('header .levels button[data-level]').forEach((btn) => {
-    btn.addEventListener('click', () => { requestNewGame(btn.dataset.level); btn.blur(); });
-  });
-  document.querySelectorAll('header .modes button').forEach((btn) => {
-    btn.addEventListener('click', () => { requestNewGame(state.level, btn.dataset.mode); btn.blur(); });
-  });
+  bindStart();
   Object.entries(MODES).forEach(([key, m]) => {
     const tab = document.createElement('button');
     tab.dataset.mode = key;
@@ -724,14 +764,12 @@ function bindUi() {
   $('resultRecords').addEventListener('click', () => openRecords());
   $('closeRecords').addEventListener('click', hideRecords);
   $('records').addEventListener('click', (e) => { if (e.target === e.currentTarget) hideRecords(); });
-  $('restart').addEventListener('click', (e) => { requestNewGame(); e.currentTarget.blur(); });
+  $('restart').addEventListener('click', (e) => { e.currentTarget.blur(); openStart(); });
   $('flagMode').addEventListener('click', (e) => { state.flagMode = !state.flagMode; updateHud(); e.currentTarget.blur(); });
   $('zoomIn').addEventListener('click', () => zoomAt(state.view.w / 2, state.view.h / 2, BUTTON_ZOOM));
   $('zoomOut').addEventListener('click', () => zoomAt(state.view.w / 2, state.view.h / 2, 1 / BUTTON_ZOOM));
   $('zoomFit').addEventListener('click', fitView);
   $('again').addEventListener('click', () => newGame());
-  $('resumeGo').addEventListener('click', resumeGame);
-  $('resumeNew').addEventListener('click', () => { state.pendingResume = null; newGame(); });
   // 창을 닫거나 다른 앱으로 넘어갈 때 바로 저장한다
   window.addEventListener('pagehide', writeSavedGame);
   document.addEventListener('visibilitychange', () => { if (document.hidden) writeSavedGame(); });
@@ -748,8 +786,9 @@ async function start() {
     state.polygons = decodeLand(await res.json());
     $('status').remove();
     const saved = readSavedGame();
-    if (saved) offerResume(saved);
+    if (saved) installSaved(saved);
     else newGame();
+    openStart();
   } catch (err) {
     $('status').textContent = '지도를 불러오지 못했습니다. 새로고침 해 주세요.';
     console.error('land data load failed', err);
