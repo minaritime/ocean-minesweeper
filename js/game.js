@@ -9,6 +9,11 @@ export const LEVELS = {
   extreme: { label: '최고', cols: 800, density: 0.15 },
 };
 
+export const MODES = {
+  basic: { label: '기본' },
+  ability: { label: '능력' },
+};
+
 /** 동서 순환, 남북 단절인 8방향 이웃마다 fn 호출 */
 export function forEachGridNeighbor(cols, rows, i, fn) {
   const r = Math.floor(i / cols);
@@ -136,11 +141,19 @@ function finishIfWon(board) {
   return 'won';
 }
 
-/** 결과: 'none' | 'opened' | 'boom' | 'won' */
-export function reveal(board, i, rng = Math.random) {
+/**
+ * 결과: 'none' | 'opened' | 'boom' | 'won' | 'shielded'
+ * shield 가 켜져 있으면 지뢰를 밟아도 끝나지 않고 그 칸에 깃발이 꽂힌다.
+ */
+export function reveal(board, i, rng = Math.random, { shield = false } = {}) {
   if (board.state === 'won' || board.state === 'lost') return 'none';
   if (!board.ocean[i] || board.open[i] || board.flag[i]) return 'none';
   if (board.state === 'ready') placeMines(board, i, rng);
+  if (board.mine[i] && shield) {
+    board.flag[i] = 1;
+    board.flags += 1;
+    return 'shielded';
+  }
   if (board.mine[i]) {
     board.state = 'lost';
     board.exploded = i;
@@ -151,7 +164,7 @@ export function reveal(board, i, rng = Math.random) {
 }
 
 /** 열린 숫자 칸 주변 깃발 수가 숫자와 같으면 나머지 이웃을 한꺼번에 연다 */
-export function chord(board, i) {
+export function chord(board, i, options = {}) {
   if (board.state !== 'playing' || !board.open[i] || board.adj[i] === 0) return 'none';
   const around = oceanNeighbors(board, i);
   const flagged = around.reduce((s, n) => s + board.flag[n], 0);
@@ -159,8 +172,8 @@ export function chord(board, i) {
   let outcome = 'none';
   for (const n of around) {
     if (board.open[n] || board.flag[n]) continue;
-    const r = reveal(board, n);
-    if (r === 'boom' || r === 'won') return r;
+    const r = reveal(board, n, Math.random, options);
+    if (r === 'boom' || r === 'won' || r === 'shielded') return r;
     if (r === 'opened') outcome = 'opened';
   }
   return outcome;

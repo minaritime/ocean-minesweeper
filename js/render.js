@@ -7,6 +7,8 @@ const COLORS = {
   land: ['#7f9d5e', '#789659'],
   closed: ['#4aa6da', '#429dd0'],
   hover: 'rgba(255, 255, 255, 0.35)',
+  aim: 'rgba(255, 179, 71, 0.55)',
+  aimEdge: '#ffb347',
   opened: ['#eaf4f8', '#dfedf3'],
   exploded: '#e53935',
   coast: 'rgba(28, 52, 22, 0.55)',
@@ -194,20 +196,40 @@ function drawMarks(ctx, view, board) {
   }
 }
 
+/** 칸 하나를 화면에 보이는 모든 바퀴 위치에 칠한다 (동서로 이어진 지도) */
+function fillCell(ctx, view, board, i, fill, edge) {
+  const { cols } = board;
+  const span = cols * view.z;
+  const r = Math.floor(i / cols);
+  const c = i % cols;
+  let x = view.panX + c * view.z;
+  x -= Math.floor(x / span) * span; // 화면 왼쪽 첫 바퀴 위치로
+  const y = view.panY + r * view.z;
+  for (; x < view.w; x += span) {
+    ctx.fillStyle = fill;
+    ctx.fillRect(x, y, view.z, view.z);
+    if (edge && view.z >= 4) {
+      ctx.strokeStyle = edge;
+      ctx.lineWidth = Math.max(1, view.z * 0.08);
+      ctx.strokeRect(x + 0.5, y + 0.5, view.z - 1, view.z - 1);
+    }
+  }
+}
+
 function drawHover(ctx, view, board, hover) {
   if (hover < 0 || !board.ocean[hover] || board.open[hover]) return;
   if (board.state !== 'ready' && board.state !== 'playing') return;
-  const { cols } = board;
-  const span = cols * view.z;
-  const r = Math.floor(hover / cols);
-  const c = hover % cols;
-  let x = view.panX + c * view.z;
-  x -= Math.floor(x / span) * span; // 화면 왼쪽 첫 바퀴 위치로
-  ctx.fillStyle = COLORS.hover;
-  for (; x < view.w; x += span) ctx.fillRect(x, view.panY + r * view.z, view.z, view.z);
+  fillCell(ctx, view, board, hover, COLORS.hover);
 }
 
-export function draw(ctx, view, game, hover) {
+/** 능력 대상 고르기 중: 효과가 닿을 칸들 */
+function drawAim(ctx, view, board, aim) {
+  if (board.state !== 'playing') return;
+  for (const i of aim) fillCell(ctx, view, board, i, COLORS.aim, COLORS.aimEdge);
+}
+
+/** aim: 능력 대상 고르기 중이면 효과가 닿을 칸 목록, 아니면 null */
+export function draw(ctx, view, game, hover, aim = null) {
   const { dpr } = view;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = COLORS.deep;
@@ -216,5 +238,6 @@ export function draw(ctx, view, game, hover) {
   drawLayer(ctx, view, game);
   drawCoast(ctx, view, game);
   drawMarks(ctx, view, game.board);
-  drawHover(ctx, view, game.board, hover);
+  if (aim) drawAim(ctx, view, game.board, aim);
+  else drawHover(ctx, view, game.board, hover);
 }

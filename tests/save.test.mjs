@@ -71,3 +71,39 @@ test('망가지거나 판 크기가 바뀐 저장은 버린다', () => {
   assert.equal(restore(good), null); // 쉬움은 300열이라 10열 저장은 옛 판
   assert.equal(restore({ ...good, layout: { ...good.layout, cols: LEVELS.easy.cols }, cells: 'AAAA' }), null);
 });
+
+const easyLayout = (rows) => ({ cols: LEVELS.easy.cols, rows, cellDeg: 1.2, rot: 33, latTop: 80.5 });
+const viewOf = { z: 20, panX: -10, panY: 5 };
+
+test('능력 모드 저장: 모드·보관한 능력·받은 단계·고르던 후보가 되살아난다', () => {
+  const b = playedBoard(LEVELS.easy.cols, 12);
+  const abilities = { inv: [{ key: 'probe', uses: 2 }, { key: 'shield', uses: 1 }], granted: 2, offer: ['scan', 'beacon', 'probe'], picks: ['probe', 'shield'] };
+  const data = JSON.parse(JSON.stringify(snapshot({
+    mode: 'ability', abilities, level: 'easy', layout: easyLayout(12), board: b, elapsed: 5, view: viewOf, savedAt: 1,
+  })));
+  assert.equal(data.v, 2);
+  const back = restore(data);
+  assert.equal(back.mode, 'ability');
+  assert.deepEqual(back.abilities, abilities);
+});
+
+test('옛(v1) 저장은 기본 모드로 읽는다', () => {
+  const b = playedBoard(LEVELS.easy.cols, 12);
+  const data = { ...snapshot({ level: 'easy', layout: easyLayout(12), board: b, elapsed: 5, view: viewOf, savedAt: 1 }), v: 1 };
+  delete data.mode;
+  delete data.abilities;
+  const back = restore(data);
+  assert.equal(back.mode, 'basic');
+  assert.deepEqual(back.abilities, { inv: [], granted: 0, offer: null, picks: [] });
+});
+
+test('능력 저장값이 망가졌으면 걸러 읽는다', () => {
+  const b = playedBoard(LEVELS.easy.cols, 12);
+  const data = snapshot({
+    mode: 'ability', level: 'easy', layout: easyLayout(12), board: b, elapsed: 5, view: viewOf, savedAt: 1,
+    abilities: { inv: [{ key: 'x', uses: 1 }], granted: 99, offer: ['nope'], picks: 'bad' },
+  });
+  const back = restore(data);
+  assert.deepEqual(back.abilities, { inv: [], granted: 3, offer: null, picks: [] });
+  assert.equal(restore({ ...data, mode: 'weird' }), null);
+});

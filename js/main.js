@@ -1,10 +1,16 @@
-import { LEVELS, createBoard, keepLargestOcean, reveal, chord, toggleFlag, progress } from './game.js';
+import { LEVELS, MODES, createBoard, keepLargestOcean, reveal, chord, toggleFlag, progress } from './game.js';
 import { decodeLand, makeLayout, buildOceanMask, buildCoastPath, carveStraits } from './geo.js';
 import { draw, createLayer, paintLayer } from './render.js';
 import {
   normalizeHistory, addPlay, addClear, summarize, rankOf, formatDuration, formatClock, formatDate, formatPercent,
 } from './records.js';
-import { snapshot, restore } from './save.js';
+import { snapshot, restore, emptyAbilities } from './save.js';
+import {
+  ABILITIES, MILESTONES, offerChoices, milestonesReached, addAbility, spendAbility, usesOf,
+  probe, scan, scanCells, beaconTarget,
+} from './abilities.js';
+import { renderAbilityBar, renderOffer } from './ability-ui.js';
+import { renderRecords as renderRecordsView } from './records-ui.js';
 
 const LONG_PRESS_MS = 380;
 const DRAG_THRESHOLD = 7;
@@ -16,7 +22,6 @@ const WHEEL_SPEED = 0.0025;
 const BUTTON_ZOOM = 1.5;
 const RESULT_DELAY = { won: 450, lost: 900 };
 const STORE_KEY = 'world-minesweeper-v3';
-const RECORD_LIST_LIMIT = 50;
 const SAVE_KEY = 'world-minesweeper-save';
 const SAVE_DELAY_MS = 800;
 const TOAST_MS = 3200;
@@ -40,8 +45,13 @@ const saved = store.read();
 const state = {
   polygons: null,
   level: LEVELS[saved.level] ? saved.level : 'easy',
+  mode: MODES[saved.mode] ? saved.mode : 'basic',
+  abilities: emptyAbilities(),
+  aiming: null, // 대상을 고르는 중인 능력
+  pauseAt: 0, // 능력 고르기 창이 떠 있는 동안 시계를 멈춘 때
   history: normalizeHistory(saved.history),
   recordsLevel: null,
+  recordsMode: 'basic',
   recordsSort: 'time',
   lastClear: null,
   game: null,
@@ -63,7 +73,7 @@ function requestRender() {
   if (state.frame) return;
   state.frame = requestAnimationFrame(() => {
     state.frame = 0;
-    draw(ctx, state.view, state.game, state.hover);
+    draw(ctx, state.view, state.game, state.hover, aimCells());
   });
 }
 
@@ -131,16 +141,21 @@ function cellAt(sx, sy) {
 
 function elapsedSeconds() {
   if (!state.startTime) return 0;
-  return ((state.endTime || performance.now()) - state.startTime) / 1000;
+  return ((state.endTime || state.pauseAt || performance.now()) - state.startTime) / 1000;
 }
 
 function updateHud() {
   const b = state.game?.board;
   $('flags').textContent = b ? b.mineCount - b.flags : 0;
   $('time').textContent = formatClock(elapsedSeconds());
-  document.querySelectorAll('header .levels button').forEach((btn) => {
+  document.querySelectorAll('header .levels button[data-level]').forEach((btn) => {
     btn.setAttribute('aria-pressed', String(btn.dataset.level === state.level));
   });
+  document.querySelectorAll('header .modes button').forEach((btn) => {
+    btn.setAttribute('aria-pressed', String(btn.dataset.mode === state.mode));
+  });
+  renderAbilityBar($('abilityBar'), state.mode === 'ability' ? state.abilities.inv : [], state.aiming, useAbility);
+  canvas.classList.toggle('aiming', Boolean(state.aiming));
   $('flagMode').setAttribute('aria-pressed', String(state.flagMode));
   $('flagMode').textContent = state.flagMode ? '🚩' : '⛏';
 }
@@ -153,11 +168,17 @@ function stopTimer() {
 /* ---------- 게임 흐름 ---------- */
 
 function save() {
-  store.write({ level: state.level, history: state.history });
+  store.write({ level: state.level, mode: state.mode, history: state.history });
 }
 
-function installGame(level, layout, board) {
+function installGame(level, layout, board, mode = state.mode, abilities = emptyAbilities()) {
   state.level = level;
+  state.mode = mode;
+  state.abilities = abilities;
+  state.aiming = null;
+  state.pauseAt = 0;
+  state.pendingResume = null;
+  hideOffer();
   save();
   const layer = createLayer(board);
   paintLayer(layer, board);
@@ -172,23 +193,24 @@ function installGame(level, layout, board) {
   hideResume();
 }
 
-function newGame(level = state.level) {
+function newGame(level = state.level, mode = state.mode) {
   if (!state.polygons) return;
   clearSavedGame();
   const { cols, density } = LEVELS[level];
   const layout = makeLayout(cols);
   const carved = carveStraits(buildOceanMask(state.polygons, layout), layout);
   const ocean = keepLargestOcean(carved, layout.cols, layout.rows);
-  installGame(level, layout, createBoard(ocean, layout.cols, layout.rows, density));
+  installGame(level, layout, createBoard(ocean, layout.cols, layout.rows, density), mode);
   fitView();
   updateHud();
 }
 
 /* ---------- 이어하기 저장 ---------- */
 
-function showToast(text) {
+function showToast(text, kind = 'error') {
   const el = $('toast');
   el.textContent = text;
+  el.classList.toggle('info', kind === 'info');
   el.classList.add('show');
   clearTimeout(el.hideTimer);
   el.hideTimer = setTimeout(() => el.classList.remove('show'), TOAST_MS);
@@ -200,6 +222,8 @@ function writeSavedGame() {
   const g = state.game;
   if (!g || g.board.state !== 'playing' || !state.startTime) return;
   const data = snapshot({
+    mode: state.mode,
+    abilities: state.abilities,
     level: state.level, layout: g.layout, board: g.board, elapsed: elapsedSeconds(), view: state.view, savedAt: Date.now(),
   });
   try {
@@ -231,7 +255,7 @@ function readSavedGame() {
 
 /** 저장된 판을 멈춘 채로 깔아 두고 고르는 창을 띄운다 */
 function offerResume(saved) {
-  installGame(saved.level, saved.layout, saved.board);
+  installGame(saved.level, saved.layout, saved.board, saved.mode, saved.abilities);
   state.pendingResume = saved;
   fitView();
   if (saved.view) {
@@ -241,7 +265,7 @@ function offerResume(saved) {
   updateHud();
   $('time').textContent = formatClock(saved.elapsed);
   requestRender();
-  $('resumeLevel').textContent = LEVELS[saved.level].label;
+  $('resumeLevel').textContent = levelLabel(saved.level, saved.mode);
   $('resumeTime').textContent = formatDuration(saved.elapsed);
   $('resumeProgress').textContent = formatPercent(progress(saved.board));
   $('resumeSaved').textContent = Number.isFinite(saved.savedAt) ? formatDate(saved.savedAt) : '';
@@ -257,6 +281,7 @@ function resumeGame() {
   state.startTime = performance.now() - saved.elapsed * 1000;
   state.timer = setInterval(updateHud, 250);
   updateHud();
+  checkMilestones();
 }
 
 function hideResume() {
@@ -266,22 +291,25 @@ function hideResume() {
 const isResumeOpen = () => $('resume').classList.contains('show');
 
 /** 오래 진행한 판을 실수로 버리지 않도록 한 번 묻는다 */
-function requestNewGame(level = state.level) {
+function requestNewGame(level = state.level, mode = state.mode) {
   const playing = state.game?.board.state === 'playing';
   if (playing && elapsedSeconds() > CONFIRM_RESTART_AFTER_SEC
     && !window.confirm(`${formatClock(elapsedSeconds())} 동안 진행한 판입니다. 버리고 새로 시작할까요?`)) return;
-  newGame(level);
+  newGame(level, mode);
 }
 
 function finish(won) {
   state.endTime = performance.now();
+  state.aiming = null;
+  hideOffer();
   stopTimer();
   clearSavedGame();
   const time = elapsedSeconds();
   let rank = 0;
   if (won) {
     const { board } = state.game;
-    const entry = { level: state.level, time, at: Date.now(), mines: board.mineCount, cells: board.oceanCount };
+    const entry = { level: state.level, mode: state.mode, time, at: Date.now(), mines: board.mineCount, cells: board.oceanCount };
+    if (state.mode === 'ability') entry.picks = [...state.abilities.picks];
     state.history = addClear(state.history, entry);
     state.lastClear = entry;
     rank = rankOf(state.history, entry);
@@ -294,36 +322,195 @@ function finish(won) {
 
 function act(i, wantFlag) {
   const b = state.game?.board;
-  if (!b || i < 0 || !b.ocean[i]) return;
+  if (!b || i < 0) return;
+  if (state.aiming) {
+    aimAt(i);
+    return;
+  }
+  if (!b.ocean[i]) return;
+  const options = { shield: state.mode === 'ability' && usesOf(state.abilities.inv, 'shield') > 0 };
   let outcome = 'none';
-  if (b.open[i]) outcome = chord(b, i);
+  if (b.open[i]) outcome = chord(b, i, options);
   else if (wantFlag) toggleFlag(b, i);
-  else outcome = reveal(b, i);
+  else outcome = reveal(b, i, Math.random, options);
   if (b.state !== 'ready' && !state.startTime) {
     state.startTime = performance.now();
-    state.history = addPlay(state.history, state.level);
+    state.history = addPlay(state.history, state.level, state.mode);
     save();
     state.timer = setInterval(updateHud, 250);
   }
+  if (outcome === 'shielded') {
+    spend('shield');
+    showToast(`${ABILITIES.shield.icon} 방패가 지뢰를 막았습니다`, 'info');
+    if (navigator.vibrate) navigator.vibrate([40, 40, 40]);
+  }
+  afterMove(outcome);
+}
+
+/** 판이 바뀐 뒤 공통 처리: 끝났는지, 저장, 다시 그리기, 능력 받을 단계 */
+function afterMove(outcome) {
+  const b = state.game.board;
   if (outcome === 'boom') finish(false);
   if (outcome === 'won') finish(true);
   if (b.state === 'playing') scheduleSave();
   paintLayer(state.game.layer, b);
   updateHud();
   requestRender();
+  checkMilestones();
 }
+
+/* ---------- 능력 모드 ---------- */
+
+function spend(key) {
+  state.abilities = { ...state.abilities, inv: spendAbility(state.abilities.inv, key) };
+}
+
+const isOfferOpen = () => $('offer').classList.contains('show');
+
+function pauseClock() {
+  if (!state.startTime || state.pauseAt || state.endTime) return;
+  state.pauseAt = performance.now();
+  stopTimer();
+}
+
+function resumeClock() {
+  if (!state.pauseAt) return;
+  state.startTime += performance.now() - state.pauseAt;
+  state.pauseAt = 0;
+  state.timer = setInterval(updateHud, 250);
+  updateHud();
+}
+
+/** 새로 넘은 단계가 있으면 고르기 창을 띄운다 (한 번에 여러 단계를 넘으면 하나씩 차례로) */
+function checkMilestones() {
+  if (state.mode !== 'ability' || state.pendingResume || isOfferOpen()) return;
+  const b = state.game?.board;
+  if (!b || milestonesReached(b) <= state.abilities.granted) return;
+  const offer = state.abilities.offer ?? offerChoices();
+  state.abilities = { ...state.abilities, offer };
+  state.aiming = null;
+  pauseClock();
+  const stage = MILESTONES[state.abilities.granted];
+  $('offerStage').textContent = stage === 0 ? '첫 능력' : `찾아낸 바다 ${Math.floor(stage * 100)}% 달성`;
+  renderOffer($('offerList'), offer, pickAbility);
+  $('offer').classList.add('show');
+  $('offerList').querySelector('button')?.focus();
+  scheduleSave();
+}
+
+function pickAbility(key) {
+  const a = state.abilities;
+  if (!a.offer?.includes(key)) return;
+  state.abilities = { inv: addAbility(a.inv, key), granted: a.granted + 1, offer: null, picks: [...a.picks, key] };
+  hideOffer();
+  resumeClock();
+  scheduleSave();
+  updateHud();
+  checkMilestones();
+}
+
+function hideOffer() {
+  $('offer').classList.remove('show');
+}
+
+function useAbility(key) {
+  const b = state.game?.board;
+  if (!b || b.state !== 'playing' || isOfferOpen() || usesOf(state.abilities.inv, key) <= 0) return;
+  const { target } = ABILITIES[key];
+  if (target === 'passive') return;
+  if (target === 'instant') {
+    useBeacon(key);
+    return;
+  }
+  state.aiming = state.aiming === key ? null : key;
+  updateHud();
+  requestRender();
+}
+
+function cancelAim() {
+  state.aiming = null;
+  updateHud();
+  requestRender();
+}
+
+/** 대상 고르기 중 i 칸을 눌렀을 때. 효과가 없는 칸이면 쓰지 않는다 */
+function aimAt(i) {
+  const b = state.game.board;
+  const key = state.aiming;
+  const outcome = key === 'scan' ? scan(b, i) : probe(b, i);
+  if (outcome === 'none') return;
+  spend(key);
+  state.aiming = null;
+  if (outcome === 'flagged' || outcome === 'confirmed') showToast(`${ABILITIES[key].icon} 지뢰가 있습니다`, 'info');
+  afterMove(outcome === 'won' ? 'won' : 'opened');
+}
+
+/** 화면에 보이는 칸, 화면 가운데에서 가까운 순 */
+function visibleCellsByDistance() {
+  const v = state.view;
+  const { cols, rows } = state.game.layout;
+  const c0 = Math.floor(-v.panX / v.z);
+  const c1 = Math.min(c0 + cols, Math.ceil((v.w - v.panX) / v.z));
+  const r0 = Math.max(0, Math.floor(-v.panY / v.z));
+  const r1 = Math.min(rows, Math.ceil((v.h - v.panY) / v.z));
+  const cx = (v.w / 2 - v.panX) / v.z;
+  const cy = (v.h / 2 - v.panY) / v.z;
+  const out = [];
+  for (let r = r0; r < r1; r += 1) {
+    for (let sc = c0; sc < c1; sc += 1) out.push({ i: r * cols + mod(sc, cols), d: (sc + 0.5 - cx) ** 2 + (r + 0.5 - cy) ** 2 });
+  }
+  return out.sort((a, b) => a.d - b.d).map((o) => o.i);
+}
+
+function useBeacon(key) {
+  const b = state.game.board;
+  const target = beaconTarget(b, visibleCellsByDistance());
+  if (target < 0) {
+    showToast('화면 안에 열 수 있는 바다가 없습니다', 'info');
+    return;
+  }
+  const outcome = reveal(b, target);
+  if (outcome === 'none') return;
+  spend(key);
+  state.aiming = null;
+  focusCell(target);
+  afterMove(outcome);
+}
+
+/** 칸이 너무 작게 보이면 그 칸을 가운데로 확대한다 */
+function focusCell(i) {
+  const v = state.view;
+  if (v.z >= MIN_PLAY_PX) return;
+  const { cols } = state.game.layout;
+  v.z = TAP_ZOOM_PX;
+  v.panX = v.w / 2 - ((i % cols) + 0.5) * v.z;
+  v.panY = v.h / 2 - (Math.floor(i / cols) + 0.5) * v.z;
+  clampView();
+}
+
+/** 대상 고르기 중 마우스가 가리키는 칸에 효과가 닿을 칸들 */
+function aimCells() {
+  const b = state.game?.board;
+  if (!state.aiming) return null;
+  if (!b || state.hover < 0) return [];
+  if (state.aiming === 'scan') return scanCells(b, state.hover);
+  return b.ocean[state.hover] && !b.open[state.hover] ? [state.hover] : [];
+}
+
+const levelLabel = (level, mode) => (mode === 'basic' ? LEVELS[level].label : `${MODES[mode].label} · ${LEVELS[level].label}`);
 
 /* ---------- 결과창 ---------- */
 
 function showResult(won, time, rank) {
-  const { best, clears } = summarize(state.history, state.level);
+  const { best, clears } = summarize(state.history, state.level, state.mode);
+  const label = levelLabel(state.level, state.mode);
   $('resultIcon').textContent = won ? '🏆' : '💥';
   $('resultTitle').textContent = won ? '바다를 모두 지켰습니다!' : '지뢰를 밟았습니다';
   let note = '';
-  if (won) note = rank === 1 ? '새 최고 기록!' : `${LEVELS[state.level].label} ${clears}번 클리어 중 ${rank}위`;
+  if (won) note = rank === 1 ? '새 최고 기록!' : `${label} ${clears}번 클리어 중 ${rank}위`;
   $('resultRecord').textContent = note;
   $('resultTime').textContent = formatDuration(time);
-  $('resultSubLabel').textContent = won ? `최고 기록 (${LEVELS[state.level].label})` : '찾아낸 바다';
+  $('resultSubLabel').textContent = won ? `최고 기록 (${label})` : '찾아낸 바다';
   $('resultSub').textContent = won ? formatDuration(best) : formatPercent(progress(state.game.board));
   $('result').classList.add('show');
   $('again').focus();
@@ -337,46 +524,15 @@ const isResultOpen = () => $('result').classList.contains('show');
 
 /* ---------- 기록창 ---------- */
 
-function recordRow(entry, rankNo) {
-  const li = document.createElement('li');
-  if (entry === state.lastClear) li.classList.add('fresh');
-  const parts = [['rank', String(rankNo)], ['t', formatDuration(entry.time)], ['d', formatDate(entry.at)]];
-  for (const [cls, text] of parts) {
-    const span = document.createElement('span');
-    span.className = cls;
-    span.textContent = text;
-    li.append(span);
-  }
-  return li;
-}
-
 function renderRecords() {
-  const level = state.recordsLevel;
-  const sum = summarize(state.history, level);
-  $('recordTabs').querySelectorAll('button').forEach((btn) => {
-    btn.setAttribute('aria-pressed', String(btn.dataset.level === level));
+  renderRecordsView({
+    history: state.history, level: state.recordsLevel, mode: state.recordsMode, sort: state.recordsSort, lastClear: state.lastClear,
   });
-  document.querySelectorAll('.sort button').forEach((btn) => {
-    btn.setAttribute('aria-pressed', String(btn.dataset.sort === state.recordsSort));
-  });
-  $('recBest').textContent = sum.best === null ? '없음' : formatDuration(sum.best);
-  $('recClears').textContent = `${sum.clears}번`;
-  $('recPlays').textContent = `${sum.plays}번`;
-  const list = (state.recordsSort === 'time' ? sum.byTime : sum.recent).slice(0, RECORD_LIST_LIMIT);
-  const ol = $('recList');
-  ol.replaceChildren();
-  if (!list.length) {
-    const li = document.createElement('li');
-    li.className = 'empty';
-    li.textContent = '아직 클리어 기록이 없습니다';
-    ol.append(li);
-    return;
-  }
-  list.forEach((entry) => ol.append(recordRow(entry, sum.byTime.indexOf(entry) + 1)));
 }
 
 function openRecords(level = state.level) {
   state.recordsLevel = level;
+  state.recordsMode = state.mode;
   hideResult();
   renderRecords();
   $('records').classList.add('show');
@@ -470,6 +626,7 @@ function onPointerUp(e) {
     clearTimeout(gesture.timer);
     const { x, y } = gesture.start;
     if (state.view.z < MIN_PLAY_PX) zoomAt(x, y, TAP_ZOOM_PX / state.view.z);
+    else if (gesture.button === 2 && state.aiming) cancelAim();
     else if (gesture.button === 2) act(cellAt(x, y), true);
     else if (gesture.button === 1) act(cellAt(x, y), false);
     else act(cellAt(x, y), state.flagMode);
@@ -495,6 +652,11 @@ function onWheel(e) {
 }
 
 function onKey(e) {
+  if (isOfferOpen()) {
+    const pick = state.abilities.offer?.[Number(e.key) - 1];
+    if (pick) { e.preventDefault(); pickAbility(pick); }
+    return;
+  }
   if (isResumeOpen()) {
     if (e.key === 'Enter') { e.preventDefault(); resumeGame(); }
     return;
@@ -511,6 +673,9 @@ function onKey(e) {
     return;
   }
   const k = e.key.toLowerCase();
+  const slot = state.mode === 'ability' && /^[1-9]$/.test(e.key) ? state.abilities.inv[Number(e.key) - 1] : null;
+  if (slot) { e.preventDefault(); useAbility(slot.key); return; }
+  if (e.key === 'Escape' && state.aiming) { cancelAim(); return; }
   if (k === 'r' || e.key === 'F2') { e.preventDefault(); requestNewGame(); }
   else if (k === 'h') openRecords();
   else if (k === 'f') { state.flagMode = !state.flagMode; updateHud(); }
@@ -532,8 +697,18 @@ function bindUi() {
   canvas.addEventListener('click', () => {}); // 지도도 눌리는 대상임을 알려 터치 보정이 버튼으로 새지 않게 한다
   window.addEventListener('resize', resizeCanvas);
   window.addEventListener('keydown', onKey);
-  document.querySelectorAll('header .levels button').forEach((btn) => {
+  document.querySelectorAll('header .levels button[data-level]').forEach((btn) => {
     btn.addEventListener('click', () => { requestNewGame(btn.dataset.level); btn.blur(); });
+  });
+  document.querySelectorAll('header .modes button').forEach((btn) => {
+    btn.addEventListener('click', () => { requestNewGame(state.level, btn.dataset.mode); btn.blur(); });
+  });
+  Object.entries(MODES).forEach(([key, m]) => {
+    const tab = document.createElement('button');
+    tab.dataset.mode = key;
+    tab.textContent = `${m.label} 모드`;
+    tab.addEventListener('click', () => { state.recordsMode = key; renderRecords(); });
+    $('recordModes').append(tab);
   });
   Object.entries(LEVELS).forEach(([key, lv]) => {
     const tab = document.createElement('button');

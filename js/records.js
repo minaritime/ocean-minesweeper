@@ -1,8 +1,9 @@
 // 판 기록: 도전 횟수와 클리어 기록. 항상 새 객체를 돌려준다.
+// 모드(mode)가 없는 기록은 기본 모드. 기본 모드 도전 횟수는 예전처럼 plays[level] 에 둔다.
 
 export const MAX_CLEARS_PER_LEVEL = 200;
 
-/** @returns {{ plays: Record<string, number>, clears: Array<{level:string,time:number,at:number,mines:number,cells:number}> }} */
+/** @returns {{ plays: Record<string, number>, clears: Array<{level:string,mode?:string,time:number,at:number,mines:number,cells:number,picks?:string[]}> }} */
 export function emptyHistory() {
   return { plays: {}, clears: [] };
 }
@@ -17,25 +18,32 @@ export function normalizeHistory(raw) {
   return { plays, clears };
 }
 
-export function addPlay(history, level) {
-  return { ...history, plays: { ...history.plays, [level]: (history.plays[level] || 0) + 1 } };
+export const modeOf = (entry) => entry.mode || 'basic';
+
+const playKey = (level, mode) => (mode === 'basic' ? level : `${mode}:${level}`);
+
+const sameSlot = (level, mode) => (c) => c.level === level && modeOf(c) === mode;
+
+export function addPlay(history, level, mode = 'basic') {
+  const key = playKey(level, mode);
+  return { ...history, plays: { ...history.plays, [key]: (history.plays[key] || 0) + 1 } };
 }
 
-/** 한 난이도에 기록이 너무 많아지면 가장 느린 기록부터 버린다 */
+/** 한 난이도·모드에 기록이 너무 많아지면 가장 느린 기록부터 버린다 */
 export function addClear(history, entry) {
   const clears = [...history.clears, entry];
-  const same = clears.filter((c) => c.level === entry.level);
+  const same = clears.filter(sameSlot(entry.level, modeOf(entry)));
   if (same.length <= MAX_CLEARS_PER_LEVEL) return { ...history, clears };
   const slowest = same.reduce((a, b) => (b.time > a.time ? b : a));
   return { ...history, clears: clears.filter((c) => c !== slowest) };
 }
 
-export function summarize(history, level) {
-  const list = history.clears.filter((c) => c.level === level);
+export function summarize(history, level, mode = 'basic') {
+  const list = history.clears.filter(sameSlot(level, mode));
   const byTime = [...list].sort((a, b) => a.time - b.time);
   const recent = [...list].sort((a, b) => b.at - a.at);
   return {
-    plays: history.plays[level] || 0,
+    plays: history.plays[playKey(level, mode)] || 0,
     clears: list.length,
     best: byTime[0]?.time ?? null,
     byTime,
@@ -43,9 +51,9 @@ export function summarize(history, level) {
   };
 }
 
-/** 이 기록이 같은 난이도에서 몇 위인지 (1부터) */
+/** 이 기록이 같은 난이도·모드에서 몇 위인지 (1부터) */
 export function rankOf(history, entry) {
-  return summarize(history, entry.level).byTime.findIndex((c) => c.at === entry.at && c.time === entry.time) + 1;
+  return summarize(history, entry.level, modeOf(entry)).byTime.findIndex((c) => c.at === entry.at && c.time === entry.time) + 1;
 }
 
 export function formatDuration(sec) {

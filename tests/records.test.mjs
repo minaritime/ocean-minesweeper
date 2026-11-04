@@ -64,3 +64,24 @@ test('백분율 표시', async () => {
   assert.equal(formatPercent(0.456), '45%');
   assert.equal(formatPercent(1), '100%');
 });
+
+test('기록과 도전 횟수는 모드별로 따로 센다, 모드 없는 옛 기록은 기본 모드', () => {
+  let h = normalizeHistory({ plays: { easy: 4 }, clears: [clear('easy', 90, 1)] });
+  h = addPlay(h, 'easy', 'ability');
+  h = addClear(h, { ...clear('easy', 30, 2), mode: 'ability', picks: ['probe'] });
+  const basic = summarize(h, 'easy');
+  const ability = summarize(h, 'easy', 'ability');
+  assert.equal(basic.plays, 4);
+  assert.equal(basic.best, 90);
+  assert.equal(ability.plays, 1);
+  assert.equal(ability.best, 30);
+  assert.deepEqual(ability.byTime[0].picks, ['probe']);
+  assert.equal(rankOf(h, h.clears[1]), 1);
+});
+
+test('기록이 넘쳐 버릴 때 다른 모드 기록은 건드리지 않는다', () => {
+  let h = addClear(emptyHistory(), { ...clear('easy', 9999, 0), mode: 'ability' });
+  for (let i = 0; i <= MAX_CLEARS_PER_LEVEL; i += 1) h = addClear(h, clear('easy', 100 + i, i + 1));
+  assert.equal(summarize(h, 'easy').clears, MAX_CLEARS_PER_LEVEL);
+  assert.equal(summarize(h, 'easy', 'ability').clears, 1);
+});

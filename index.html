@@ -89,12 +89,44 @@
     padding: 10px 16px; border-radius: 10px; font-size: 14px; opacity: 0; pointer-events: none; transition: opacity .2s;
     z-index: 9; max-width: calc(100vw - 32px); text-align: center; }
   .toast.show { opacity: 1; }
+  .toast.info { background: #1b5678; }
+  .modes button[aria-pressed="true"] { background: var(--accent); color: #3a2400; }
+  canvas.aiming { cursor: crosshair; }
+  .ability-bar { position: absolute; left: 14px; bottom: 14px; display: flex; gap: 8px; flex-wrap: wrap;
+    max-width: calc(100% - 90px); }
+  .ability-bar[hidden] { display: none; }
+  .ability { position: relative; display: flex; align-items: center; gap: 6px; border: 0; border-radius: 12px;
+    padding: 8px 12px 8px 10px; background: var(--bar); color: var(--ink); font: inherit; font-size: 15px;
+    font-weight: 700; cursor: pointer; box-shadow: 0 3px 10px rgba(0,0,0,.45); transition: transform .12s ease-out; }
+  .ability:hover { transform: translateY(-2px); background: var(--bar-hi); }
+  .ability[aria-pressed="true"] { background: var(--accent); color: #3a2400; transform: translateY(-3px);
+    box-shadow: 0 0 0 3px rgba(255,179,71,.35), 0 6px 14px rgba(0,0,0,.45); }
+  .ability.passive { cursor: default; background: #1d4a3a; }
+  .ability.passive:hover { transform: none; }
+  .ability:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .ab-key { font-size: 11px; color: var(--muted); background: rgba(0,0,0,.25); border-radius: 5px; padding: 1px 5px; }
+  .ability[aria-pressed="true"] .ab-key { color: #3a2400; background: rgba(255,255,255,.4); }
+  .ab-icon { font-size: 19px; line-height: 1; }
+  .ab-uses { font-variant-numeric: tabular-nums; font-size: 13px; opacity: .85; }
+  .offer-list { display: flex; flex-direction: column; gap: 8px; text-align: left; }
+  .offer-item { display: grid; grid-template-columns: 22px 34px 1fr; align-items: center; gap: 8px; border: 2px solid #e3ebf0;
+    background: #fff; border-radius: 12px; padding: 10px 12px; font: inherit; color: var(--card-ink); cursor: pointer;
+    transition: border-color .12s, transform .12s; }
+  .offer-item:hover, .offer-item:focus-visible { border-color: var(--accent); transform: translateX(3px); outline: none; }
+  .of-key { font-size: 12px; font-weight: 800; color: #8aa1ae; text-align: center; }
+  .of-icon { font-size: 26px; line-height: 1; text-align: center; }
+  .of-text b { display: block; font-size: 16px; }
+  .of-text small { color: #5b7686; font-size: 13px; }
+  .rec-list .picks { margin-left: 6px; font-size: 13px; letter-spacing: 1px; }
+  .tabs.modes-tabs button[aria-pressed="true"] { color: #b06000; }
   @keyframes fade { from { opacity: 0; } }
   @keyframes pop { from { transform: scale(.9); opacity: 0; } }
   @media (max-width: 560px) {
     h1 { display: none; }
     header { gap: 6px; padding: 6px 8px; }
-    header .levels { flex: 1 1 100%; }
+    header .levels:not(.modes) { flex: 1 1 100%; }
+    .ability { padding: 7px 9px; font-size: 14px; }
+    .ab-key { display: none; }
     .levels button { flex: 1; padding: 6px 8px; font-size: 13px; }
     .stat { min-width: 0; font-size: 15px; }
     .icon-btn { width: 34px; height: 34px; font-size: 16px; }
@@ -104,6 +136,10 @@
 <body>
 <header>
   <h1>🌍 세계지도 지뢰찾기</h1>
+  <div class="levels modes" role="group" aria-label="모드">
+    <button data-mode="basic">기본</button>
+    <button data-mode="ability">능력</button>
+  </div>
   <div class="levels" role="group" aria-label="난이도">
     <button data-level="easy">쉬움</button>
     <button data-level="normal">보통</button>
@@ -120,6 +156,7 @@
 <main>
   <div id="status">지도를 불러오는 중…</div>
   <canvas id="board"></canvas>
+  <div class="ability-bar" id="abilityBar" hidden></div>
   <div class="zoom">
     <button class="icon-btn" id="zoomIn" title="확대">＋</button>
     <button class="icon-btn" id="zoomOut" title="축소">－</button>
@@ -148,6 +185,7 @@
       <h2 id="recordsTitle">📜 클리어 기록</h2>
       <button class="close" id="closeRecords" aria-label="닫기">✕</button>
     </div>
+    <div class="levels tabs modes-tabs" id="recordModes" role="tablist"></div>
     <div class="levels tabs" id="recordTabs" role="tablist"></div>
     <div class="rows three">
       <div><small>최고 기록</small><b id="recBest">없음</b></div>
@@ -175,6 +213,14 @@
       <button class="secondary" id="resumeNew">새로하기</button>
       <button class="primary" id="resumeGo">이어하기</button>
     </div>
+  </div>
+</div>
+<div class="overlay" id="offer" role="dialog" aria-modal="true" aria-labelledby="offerTitle">
+  <div class="card">
+    <div class="big">🎁</div>
+    <h2 id="offerTitle">능력 고르기</h2>
+    <div class="record" id="offerStage"></div>
+    <div class="offer-list" id="offerList"></div>
   </div>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
