@@ -688,7 +688,7 @@ function bindRadarHandle() {
   handle.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
 }
 
-/** 호르무즈 봉쇄 짤: 그림(img/hormuz.png)이 있으면 그림, 없으면 이모지 */
+/** 호르무즈 봉쇄 짤: 그림(img/hormuz.jpg)이 있으면 그림, 없으면 이모지 */
 function showMeme() {
   const el = $('meme');
   const img = $('memeImg');

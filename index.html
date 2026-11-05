@@ -169,7 +169,7 @@
   .meme { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 6; opacity: 0; }
   .meme.show { animation: meme 2.6s ease-out forwards; }
   .meme-inner { text-align: center; }
-  .meme img { display: none; max-width: min(70vw, 420px); max-height: 60vh; border-radius: 14px;
+  .meme img { display: none; width: min(80vw, 400px); max-height: 60vh; object-fit: contain; border-radius: 14px;
     box-shadow: 0 12px 40px rgba(0,0,0,.55); }
   .meme.has-img img { display: block; margin: 0 auto; }
   .meme.has-img .meme-fallback { display: none; }
@@ -292,7 +292,7 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <div class="meme" id="meme" aria-hidden="true">
   <div class="meme-inner">
-    <img id="memeImg" src="img/hormuz.png" alt="">
+    <img id="memeImg" src="img/hormuz.jpg" alt="">
     <div class="meme-fallback">😬☝️</div>
     <div class="meme-cap">호르무즈 해협 봉쇄</div>
   </div>
