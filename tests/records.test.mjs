@@ -2,8 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   emptyHistory, normalizeHistory, addPlay, addClear, summarize, rankOf,
-  formatDuration, formatClock, formatDate, MAX_CLEARS_PER_LEVEL,
+  formatDuration, formatClock, formatDate, formatProgress, MAX_CLEARS_PER_LEVEL,
 } from '../js/records.js';
+
+test('진행률은 소수 한 자리까지 내림으로 보여 주고 다 열기 전엔 100%가 되지 않는다', () => {
+  assert.equal(formatProgress(0), '0.0%');
+  assert.equal(formatProgress(0.12345), '12.3%');
+  assert.equal(formatProgress(0.9999), '99.9%');
+  assert.equal(formatProgress(1), '100.0%');
+});
 
 const clear = (level, time, at) => ({ level, time, at, mines: 10, cells: 100 });
 

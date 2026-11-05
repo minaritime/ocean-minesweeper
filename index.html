@@ -30,6 +30,12 @@
   .stat { display: flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; font-size: 16px;
     font-weight: 700; min-width: 64px; }
   .spacer { flex: 1; }
+  header { position: relative; }
+  .progress-stat { min-width: 84px; color: #8fe3ff; }
+  .progress-track { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(0,0,0,.3);
+    pointer-events: none; }
+  .progress-track i { display: block; height: 100%; background: linear-gradient(90deg, #4fc3f7, #8fe3ff);
+    transform: scaleX(0); transform-origin: left; transition: transform .3s ease-out; }
   .icon-btn { border: 0; background: var(--bar-hi); color: var(--ink); width: 38px; height: 38px; border-radius: 9px;
     font-size: 18px; cursor: pointer; display: grid; place-items: center; }
   .icon-btn:hover { filter: brightness(1.15); }
@@ -166,8 +172,19 @@
     .ability { padding: 7px 9px; font-size: 14px; }
     .ab-key { display: none; }
     .levels button { flex: 1; padding: 6px 8px; font-size: 13px; }
-    .stat { min-width: 0; font-size: 15px; }
+    .stat { min-width: 0; font-size: 15px; gap: 3px; }
     .icon-btn { width: 34px; height: 34px; font-size: 16px; }
+  }
+  @media (max-width: 420px) {
+    header { gap: 4px; padding: 6px; }
+    .spacer { display: none; }
+    #flagMode { margin-left: auto; }
+    .progress-stat { min-width: 0; }
+    .progress-icon { display: none; }
+  }
+  @media (max-width: 380px) {
+    .icon-btn { width: 32px; height: 32px; }
+    .now { padding: 4px 6px; }
   }
 </style>
 </head>
@@ -177,7 +194,9 @@
   <div class="now" id="gameLabel"></div>
   <div class="stat" title="남은 깃발">🚩 <span id="flags">0</span></div>
   <div class="stat" title="시간">⏱ <span id="time">0</span></div>
+  <div class="stat progress-stat" title="찾아낸 바다"><span class="progress-icon">🌊</span><span id="progress">0.0%</span></div>
   <div class="spacer"></div>
+  <div class="progress-track" aria-hidden="true"><i id="progressFill"></i></div>
   <button class="icon-btn" id="flagMode" aria-pressed="false" title="깃발 모드 (F)">⛏</button>
   <button class="icon-btn" id="openRecords" title="기록 (H)">📜</button>
   <button class="icon-btn" id="restart" title="새 판 (R)">🔄</button>

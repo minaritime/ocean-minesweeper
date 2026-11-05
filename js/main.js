@@ -2,7 +2,7 @@ import { LEVELS, MODES, createBoard, keepLargestOcean, reveal, chord, toggleFlag
 import { decodeLand, makeLayout, buildOceanMask, buildCoastPath, carveStraits } from './geo.js';
 import { draw, createLayer, paintLayer } from './render.js';
 import {
-  normalizeHistory, addPlay, addClear, summarize, rankOf, formatDuration, formatClock, formatPercent,
+  normalizeHistory, addPlay, addClear, summarize, rankOf, formatDuration, formatClock, formatPercent, formatProgress,
 } from './records.js';
 import { snapshot, restore, emptyAbilities, lostSnapshot, restoreLost } from './save.js';
 import { renderAbilityBar } from './ability-ui.js';
@@ -154,6 +154,9 @@ function elapsedSeconds() {
 function updateHud() {
   const b = state.game?.board;
   $('flags').textContent = b ? b.mineCount - b.flags : 0;
+  const ratio = b ? progress(b) : 0;
+  $('progress').textContent = formatProgress(ratio);
+  $('progressFill').style.transform = `scaleX(${ratio})`;
   $('time').textContent = formatClock(state.pendingResume ? state.pendingResume.elapsed : elapsedSeconds());
   $('gameLabel').textContent = fullLabel(state.level, state.mode);
   renderAbilityBar($('abilityBar'), state.mode === 'ability' ? state.abilities.inv : [], state.aiming, flow.useAbility);
