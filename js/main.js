@@ -10,6 +10,7 @@ import { createAbilityFlow } from './ability-flow.js';
 import { createEffects } from './effects.js';
 import { renderRecords as renderRecordsView } from './records-ui.js';
 import { buildStart, renderStart } from './start-ui.js';
+import { createAwayPause } from './away-pause.js';
 
 const LONG_PRESS_MS = 380;
 const DRAG_THRESHOLD = 7;
@@ -183,6 +184,7 @@ function installGame(level, layout, board, mode = state.mode, abilities = emptyA
   state.aiming = null;
   state.aimFirst = -1;
   state.pauseAt = 0;
+  away.reset();
   state.pendingResume = null;
   flow.hideOffer();
   save();
@@ -434,6 +436,13 @@ function resumeClock() {
   state.timer = setInterval(updateHud, 250);
   updateHud();
 }
+
+/** 다른 탭·창을 보거나 휴대폰 화면을 내리면 시계를 멈추고, 돌아오면 이어 간다 */
+const away = createAwayPause({
+  isPaused: () => Boolean(state.pauseAt),
+  pause: pauseClock,
+  resume: resumeClock,
+});
 
 /** 진 판을 남겨 둔다 (였던것으로 이어 하기) */
 function writeLostGame() {
@@ -734,7 +743,14 @@ function bindUi() {
   $('again').addEventListener('click', () => newGame());
   // 창을 닫거나 다른 앱으로 넘어갈 때 바로 저장한다
   window.addEventListener('pagehide', writeSavedGame);
-  document.addEventListener('visibilitychange', () => { if (document.hidden) writeSavedGame(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      writeSavedGame();
+      away.onHidden();
+    } else {
+      away.onVisible();
+    }
+  });
   $('viewMap').addEventListener('click', hideResult);
 }
 
