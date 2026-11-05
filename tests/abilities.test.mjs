@@ -35,7 +35,7 @@ test('능력표: 이름·횟수·발동 방식이 다 있다', () => {
     assert.ok(['slot', 'event'].includes(a.kind), key);
     if (a.kind === 'event') continue;
     assert.ok(Number.isInteger(a.uses) && a.uses > 0, key);
-    assert.ok(['cell', 'area', 'pair', 'count', 'circle', 'instant', 'passive'].includes(a.target), key);
+    assert.ok(['cell', 'area', 'pair', 'count', 'circle', 'line', 'instant', 'passive'].includes(a.target), key);
   }
 });
 

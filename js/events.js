@@ -1,6 +1,6 @@
-// 판 자체를 바꾸는 사건(국국가가, 핵전쟁)의 새 판 만들기. 화면과 무관한 순수 함수.
+// 판 자체를 바꾸는 사건(국국가가, 핵전쟁, 천둥번개)의 판 바꾸기. 화면과 무관한 순수 함수.
 
-import { createBoard, placeMinesAvoiding, reveal, forEachGridNeighbor } from './game.js';
+import { createBoard, placeMinesAvoiding, reveal, forEachGridNeighbor, settle } from './game.js';
 
 /** 이어진 칸끼리 묶은 덩어리들 (8방향, 동서 순환) */
 export function components(mask, cols, rows) {
@@ -66,4 +66,32 @@ export function allSeaBoard(oldBoard, density, rng = Math.random) {
   placeMinesAvoiding(board, withNeighbors(board, opened), rng);
   for (const i of opened) reveal(board, i);
   return board;
+}
+
+/**
+ * 천둥번개: 지뢰를 ratio 만큼 무작위로 없애고 주변 숫자를 다시 센다.
+ * 숫자가 0이 된 열린 칸 둘레는 마저 연다. 결과: 'done' | 'won'
+ */
+export function removeMines(board, ratio, rng = Math.random) {
+  const mines = [];
+  for (let i = 0; i < board.mine.length; i += 1) if (board.mine[i]) mines.push(i);
+  const remove = Math.min(mines.length - 1, Math.round(mines.length * ratio));
+  for (let k = 0; k < remove; k += 1) {
+    const j = k + Math.floor(rng() * (mines.length - k));
+    [mines[k], mines[j]] = [mines[j], mines[k]];
+    const m = mines[k];
+    board.mine[m] = 0;
+    forEachGridNeighbor(board.cols, board.rows, m, (n) => { board.adj[n] -= 1; });
+  }
+  board.mineCount -= Math.max(0, remove);
+  const edge = [];
+  for (let i = 0; i < board.open.length; i += 1) if (board.open[i] && board.adj[i] === 0) edge.push(i);
+  for (const e of edge) {
+    let won = false;
+    forEachGridNeighbor(board.cols, board.rows, e, (n) => {
+      if (!won && board.ocean[n] && !board.open[n] && !board.flag[n] && reveal(board, n) === 'won') won = true;
+    });
+    if (won) return 'won';
+  }
+  return settle(board);
 }

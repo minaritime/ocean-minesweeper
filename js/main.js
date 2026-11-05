@@ -11,12 +11,11 @@ import { createEffects } from './effects.js';
 import { renderRecords as renderRecordsView } from './records-ui.js';
 import { buildStart, renderStart } from './start-ui.js';
 import { createAwayPause } from './away-pause.js';
+import { createView, MIN_PLAY_PX } from './view.js';
+import { createHazards } from './hazards.js';
 
 const LONG_PRESS_MS = 380;
 const DRAG_THRESHOLD = 7;
-const MAX_CELL_PX = 90;
-const FILL_CELL_PX_MAX = 40;
-const MIN_PLAY_PX = 8; // 칸이 이보다 작으면 누른 곳을 먼저 확대한다
 const TAP_ZOOM_PX = 26;
 const WHEEL_SPEED = 0.0025;
 const BUTTON_ZOOM = 1.5;
@@ -27,6 +26,7 @@ const LOST_KEY = 'world-minesweeper-lost'; // 마지막으로 진 판 (였던것
 const SAVE_DELAY_MS = 800;
 const TOAST_MS = 3200;
 const CONFIRM_RESTART_AFTER_SEC = 60;
+const MEME_MS = 2600;
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('board');
@@ -72,6 +72,19 @@ const state = {
   frame: 0,
 };
 
+const {
+  clampView, resizeCanvas, fitView, zoomAt, cellAt, pointToGrid, centerOn, flyTo,
+} = createView({ state, canvas, requestRender });
+
+const hazards = createHazards({
+  state,
+  minPlayPx: MIN_PLAY_PX,
+  pointToGrid,
+  onBite: (gx, gy) => flow.sharkBite(gx, gy),
+  showToast: (text, kind) => showToast(text, kind),
+  handle: $('radarHandle'),
+});
+
 /* ---------- 화면 ---------- */
 
 function requestRender() {
@@ -79,70 +92,11 @@ function requestRender() {
   state.frame = requestAnimationFrame(() => {
     state.frame = 0;
     draw(ctx, state.view, state.game, state.hover, flow.aimCells(), state.abilities.counts);
+    const moving = hazards.draw(ctx, state.view);
     const [dx, dy] = effects.shake();
     canvas.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : '';
-    if (effects.draw(ctx, state.view)) requestRender();
+    if (effects.draw(ctx, state.view) || moving) requestRender();
   });
-}
-
-function resizeCanvas() {
-  const rect = canvas.getBoundingClientRect();
-  const v = state.view;
-  const cx = v.w / 2;
-  const cy = v.h / 2;
-  v.dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.round(rect.width * v.dpr);
-  canvas.height = Math.round(rect.height * v.dpr);
-  v.panX += rect.width / 2 - cx;
-  v.panY += rect.height / 2 - cy;
-  v.w = rect.width;
-  v.h = rect.height;
-  if (state.game) {
-    v.fitZ = Math.min(v.w / state.game.layout.cols, v.h / state.game.layout.rows);
-    clampView();
-  }
-  requestRender();
-}
-
-function clampView() {
-  const v = state.view;
-  const { cols, rows } = state.game.layout;
-  v.z = Math.min(MAX_CELL_PX, Math.max(v.fitZ * 0.8, v.z));
-  v.panX = -mod(-v.panX, cols * v.z);
-  const height = rows * v.z;
-  if (height <= v.h) v.panY = (v.h - height) / 2;
-  else v.panY = Math.min(40, Math.max(v.h - height - 40, v.panY));
-}
-
-function fitView() {
-  const v = state.view;
-  const { cols, rows } = state.game.layout;
-  v.fitZ = Math.min(v.w / cols, v.h / rows);
-  v.z = Math.max(v.fitZ, Math.min(FILL_CELL_PX_MAX, v.h / rows));
-  v.panX = (v.w - cols * v.z) / 2;
-  v.panY = (v.h - rows * v.z) / 2;
-  clampView();
-  requestRender();
-}
-
-function zoomAt(sx, sy, factor) {
-  if (!state.game) return;
-  const v = state.view;
-  const wx = (sx - v.panX) / v.z;
-  const wy = (sy - v.panY) / v.z;
-  v.z = Math.min(MAX_CELL_PX, Math.max(v.fitZ * 0.8, v.z * factor));
-  v.panX = sx - wx * v.z;
-  v.panY = sy - wy * v.z;
-  clampView();
-  requestRender();
-}
-
-function cellAt(sx, sy) {
-  const v = state.view;
-  const { cols, rows } = state.game.layout;
-  const r = Math.floor((sy - v.panY) / v.z);
-  if (r < 0 || r >= rows) return -1;
-  return r * cols + mod(Math.floor((sx - v.panX) / v.z), cols);
 }
 
 /* ---------- 상단 정보 ---------- */
@@ -160,10 +114,13 @@ function updateHud() {
   $('progressFill').style.transform = `scaleX(${ratio})`;
   $('time').textContent = formatClock(state.pendingResume ? state.pendingResume.elapsed : elapsedSeconds());
   $('gameLabel').textContent = fullLabel(state.level, state.mode);
-  renderAbilityBar($('abilityBar'), state.mode === 'ability' ? state.abilities.inv : [], state.aiming, flow.useAbility);
+  const isAbility = state.mode === 'ability';
+  renderAbilityBar($('abilityBar'), isAbility ? state.abilities.inv : [], state.aiming, flow.useAbility,
+    isAbility && Boolean(state.abilities.photo));
   canvas.classList.toggle('aiming', Boolean(state.aiming));
   $('flagMode').setAttribute('aria-pressed', String(state.flagMode));
   $('flagMode').textContent = state.flagMode ? '🚩' : '⛏';
+  requestRender(); // 멈췄던 상어·번개를 다시 움직인다
 }
 
 function stopTimer() {
@@ -189,6 +146,8 @@ function installGame(level, layout, board, mode = state.mode, abilities = emptyA
   flow.hideOffer();
   save();
   state.game = { layout, board, ...boardLayers(board, layout, abilities.look) };
+  hazards.reset();
+  hazards.sync();
   stopTimer();
   clearTimeout(state.resultTimer);
   state.startTime = 0;
@@ -207,8 +166,14 @@ function boardLayers(board, layout, look) {
 
 /** 사건으로 판만 바꾼다 (시계·능력은 그대로) */
 function swapBoard(board, look) {
-  state.abilities = { ...state.abilities, look, counts: [] };
+  const lookChanged = look !== state.abilities.look;
+  // 다른 모양의 판에서 찍은 사진은 쓸 수 없다 (사진으로 되돌릴 때는 tryPhoto 가 이미 비운다)
+  state.abilities = { ...state.abilities, look, counts: [], photo: null };
   state.game = { ...state.game, board, ...boardLayers(board, state.game.layout, look) };
+  if (lookChanged) {
+    hazards.reset(); // 바다 모양이 바뀌면 상어를 새 바다에 다시 푼다
+    hazards.sync();
+  }
   updateHud();
   requestRender();
 }
@@ -387,7 +352,7 @@ function finish(won) {
 function act(i, wantFlag) {
   const b = state.game?.board;
   if (!b || i < 0) return;
-  if (state.busy) return;
+  if (state.busy || hazards.radarOn()) return;
   if (state.aiming) {
     flow.aimAt(i);
     return;
@@ -411,6 +376,7 @@ function act(i, wantFlag) {
 
 /** 판이 바뀐 뒤 공통 처리: 끝났는지, 저장, 다시 그리기, 능력 받을 단계 */
 function afterMove(outcome) {
+  if (outcome === 'boom' && flow.tryPhoto()) return;
   const b = state.game.board;
   if (outcome === 'boom') finish(false);
   if (outcome === 'won') finish(true);
@@ -498,6 +464,11 @@ const flow = createAbilityFlow({
   isBlocked: () => isStartOpen(),
   swapBoard,
   showWorld: () => fitView(),
+  hazards,
+  centerOn: (x, y) => centerOn(x, y),
+  flyTo,
+  showMeme,
+  minPlayPx: MIN_PLAY_PX,
   landMask: () => buildOceanMask(state.polygons, state.game.layout).map((v) => (v ? 0 : 1)),
   density: () => LEVELS[state.level].density,
   readLost: readLostGame,
@@ -571,8 +542,11 @@ function localPoint(e) {
 
 function onPointerDown(e) {
   if (!state.game) return;
-  canvas.setPointerCapture(e.pointerId);
   const p = localPoint(e);
+  state.lastPointerType = e.pointerType;
+  if (e.pointerType !== 'mouse' && hazards.tryBite(p.x, p.y)) return; // 휴대폰: 누른 곳에 상어
+  hazards.setPointer({ pressed: true }); // 마우스: 누르는 동안(클릭·끌기)에는 물리지 않는다
+  canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, p);
   if (pointers.size === 1) {
     gesture = { kind: 'tap', button: e.button, start: p, last: p, longPressed: false, timer: 0 };
@@ -594,7 +568,9 @@ function onPointerDown(e) {
 function onPointerMove(e) {
   if (!state.game) return;
   const p = localPoint(e);
+  hazards.setPointer({ x: p.x, y: p.y, inside: true, pressed: pointers.has(e.pointerId), type: e.pointerType });
   if (!pointers.has(e.pointerId)) {
+    state.lastPointerType = e.pointerType;
     const cell = cellAt(p.x, p.y);
     if (cell !== state.hover) {
       state.hover = cell;
@@ -631,6 +607,7 @@ function onPointerUp(e) {
   if (!pointers.has(e.pointerId)) return;
   pointers.delete(e.pointerId);
   canvas.classList.remove('grabbing');
+  hazards.setPointer({ pressed: pointers.size > 0 });
   if (gesture?.kind === 'tap' && !gesture.longPressed && pointers.size === 0) {
     clearTimeout(gesture.timer);
     const { x, y } = gesture.start;
@@ -694,6 +671,35 @@ function onKey(e) {
   else if (e.key === '0') fitView();
 }
 
+/** 휴대폰 레이더: 📡 아이콘을 끌어 보는 곳을 옮긴다 (지도는 그대로 움직일 수 있다) */
+function bindRadarHandle() {
+  const handle = $('radarHandle');
+  const move = (e) => {
+    const { x, y } = localPoint(e);
+    hazards.moveHandle(x, y);
+    requestRender();
+  };
+  handle.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    handle.setPointerCapture(e.pointerId);
+    move(e);
+  });
+  handle.addEventListener('pointermove', (e) => { if (handle.hasPointerCapture(e.pointerId)) move(e); });
+  handle.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
+}
+
+/** 호르무즈 봉쇄 짤: 그림(img/hormuz.png)이 있으면 그림, 없으면 이모지 */
+function showMeme() {
+  const el = $('meme');
+  const img = $('memeImg');
+  el.classList.toggle('has-img', img.complete && img.naturalWidth > 0);
+  el.classList.remove('show');
+  void el.offsetWidth; // 연출을 처음부터 다시 시작한다
+  el.classList.add('show');
+  clearTimeout(el.hideTimer);
+  el.hideTimer = setTimeout(() => el.classList.remove('show'), MEME_MS);
+}
+
 function bindStart() {
   buildStart({ modes: MODES, levels: LEVELS, onPick: setPick });
   $('startGo').addEventListener('click', startNew);
@@ -705,7 +711,11 @@ function bindUi() {
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
   canvas.addEventListener('pointercancel', onPointerCancel);
-  canvas.addEventListener('pointerleave', () => { if (!pointers.size) { state.hover = -1; requestRender(); } });
+  canvas.addEventListener('pointerleave', () => {
+    hazards.setPointer({ inside: false });
+    if (!pointers.size) { state.hover = -1; requestRender(); }
+  });
+  bindRadarHandle();
   canvas.addEventListener('wheel', onWheel, { passive: false });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   // 휴대폰 브라우저가 지도 위 터치를 근처 버튼 클릭으로 보정하지 않도록 막는다

@@ -229,9 +229,65 @@ function drawNuke(ctx, view, fx, ms) {
   }
 }
 
+/** 두 칸 좌표를 화면 좌표로 (b 는 a 와 같은 바퀴 쪽으로) */
+function screenPair(view, cols, a, b) {
+  const [ax, ay] = toScreen(view, cols, a[0], a[1]);
+  const [bx0, by] = toScreen(view, cols, b[0], b[1]);
+  const span = cols * view.z;
+  return [ax, ay, bx0 - Math.round((bx0 - ax) / span) * span, by];
+}
+
+/** 소나: 고른 칸에서 끝 칸까지 음파 고리가 퍼져 나간다 */
+function drawBeam(ctx, view, fx, t) {
+  const [ax, ay, bx, by] = screenPair(view, fx.cols, cellXY(fx.cols, fx.a), cellXY(fx.cols, fx.b));
+  ctx.globalAlpha = 1 - t * 0.7;
+  ctx.strokeStyle = '#80deea';
+  ctx.lineWidth = Math.max(2, view.z * 0.25);
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(ax + (bx - ax) * ease(Math.min(1, t * 2)), ay + (by - ay) * ease(Math.min(1, t * 2)));
+  ctx.stroke();
+  for (let k = 0; k < 3; k += 1) {
+    const u = clamp01(t * 1.6 - k * 0.25);
+    if (u <= 0 || u >= 1) continue;
+    ctx.globalAlpha = 1 - u;
+    ctx.beginPath();
+    ctx.arc(ax + (bx - ax) * u, ay + (by - ay) * u, view.z * (0.6 + u * 0.8), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
+/** 호르무즈 봉쇄선: 빨강·흰 줄무늬 띠가 해협을 가로질러 그어진다 */
+function drawBarrier(ctx, view, fx, t) {
+  const [ax, ay, bx, by] = screenPair(view, fx.cols, fx.from, fx.to);
+  const grow = ease(clamp01(t * 3));
+  const ex = ax + (bx - ax) * grow;
+  const ey = ay + (by - ay) * grow;
+  const w = Math.max(6, Math.min(16, view.z * 0.45));
+  ctx.globalAlpha = t > 0.85 ? (1 - t) / 0.15 : 1;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = '#b71c1c';
+  ctx.lineWidth = w;
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(ex, ey);
+  ctx.stroke();
+  ctx.setLineDash([w * 0.9, w * 0.9]);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = w * 0.55;
+  ctx.stroke();
+  ctx.setLineDash([]);
+  if (grow < 1) return;
+  const size = Math.max(26, w * 3);
+  ctx.font = `${Math.round(size)}px system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('⛔', (ax + bx) / 2 + size * 0.9, (ay + by) / 2);
+}
+
 const DRAWERS = {
   ring: drawRing, square: drawSquare, bubble: drawBubble, spikes: drawSpikes, wave: drawWave,
-  glow: drawGlow, rise: drawRise, screen: drawScreen,
+  glow: drawGlow, rise: drawRise, screen: drawScreen, beam: drawBeam, barrier: drawBarrier,
 };
 
 export function createEffects() {

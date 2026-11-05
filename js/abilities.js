@@ -32,6 +32,30 @@ export const ABILITIES = {
     desc: '대륙을 모두 없애기. 앞으로 받는 능력 횟수 2배, 한 번 더 고르기',
   },
   unfair: { name: '억까 ㄴ', icon: '🙅', kind: 'event', desc: '주변 바다가 2칸 이하인 막다른 칸을 모두 풀기' },
+  sonar: {
+    name: '소나', icon: '🔊', uses: 30, kind: 'slot', target: 'line',
+    desc: '칸을 고르고 방향을 고르면 그쪽으로 음파를 쏴 첫 지뢰까지 열고 깃발',
+  },
+  photo: {
+    name: '사진', icon: '📸', uses: 3, kind: 'slot', target: 'instant',
+    desc: '지금 판을 찍어 두기. 지뢰가 터지면 찍은 때로 돌아가고 터진 지뢰에 깃발',
+  },
+  radar: {
+    name: '레이더', icon: '📡', uses: 15, kind: 'slot', target: 'instant',
+    desc: '5초 동안 주변 지뢰가 보임. 그동안 칸을 열거나 깃발을 꽂지 못함',
+  },
+  hormuz: {
+    name: '호르무즈 해협 봉쇄', icon: '🛢️', kind: 'event', firstOnly: true, needsSea: true,
+    desc: '페르시아만과 오만만을 모두 풀기',
+  },
+  sharknado: {
+    name: '상어토네이도', icon: '🦈', kind: 'event', firstOnly: true,
+    desc: '바다 곳곳에 상어가 돌아다님. 마우스나 누른 곳이 상어에 닿으면 엉뚱한 곳으로 날아가고 연 칸 일부가 다시 덮임',
+  },
+  thunder: {
+    name: '천둥번개', icon: '⛈️', kind: 'event', firstOnly: true,
+    desc: '지뢰 30% 감소. 대신 66% 능력을 받을 때까지 화면이 어둡고 번개 칠 때만 밝아짐. ⚠️ 광과민성 주의: 화면이 번쩍임',
+  },
 };
 
 export const ABILITY_KEYS = Object.keys(ABILITIES);
@@ -59,19 +83,30 @@ export function eligibleKeys({ picks, hasLost, look }) {
     if (key === 'remnant' && !hasLost) return false;
     if ((key === 'coast' || key === 'unfair') && look === 'nuke') return false;
     if (key === 'atlantis' && look === 'land') return false; // 대륙판에서는 메울 바다가 곧 벽이라 뜻이 뒤집힌다
+    if (ABILITIES[key].needsSea && look !== 'sea') return false;
     return true;
   });
 }
 
-/** 후보 중 서로 다른 size 개를 무작위로 */
+/** 한 번 고를 때 사건은 이 수까지만 (능력을 하나도 못 고르는 일을 막는다) */
+export const MAX_EVENTS_PER_OFFER = 2;
+
+const isEvent = (key) => ABILITIES[key]?.kind === 'event';
+
+/** 후보 중 서로 다른 size 개를 무작위로. 사건은 MAX_EVENTS_PER_OFFER 개까지 (모자라면 사건으로 채움) */
 export function offerChoices(rng = Math.random, keys = ABILITY_KEYS, size = OFFER_SIZE) {
   const pool = [...keys];
-  const n = Math.min(size, pool.length);
-  for (let k = 0; k < n; k += 1) {
-    const j = k + Math.floor(rng() * (pool.length - k));
+  for (let k = pool.length - 1; k > 0; k -= 1) {
+    const j = Math.floor(rng() * (k + 1));
     [pool[k], pool[j]] = [pool[j], pool[k]];
   }
-  return pool.slice(0, n);
+  const picked = [];
+  const extra = [];
+  for (const key of pool) {
+    if (isEvent(key) && picked.filter(isEvent).length >= MAX_EVENTS_PER_OFFER) extra.push(key);
+    else picked.push(key);
+  }
+  return [...picked, ...extra].slice(0, Math.min(size, pool.length));
 }
 
 /** 지금 진행으로 몇 단계까지 받을 수 있는지 (진행 중인 판만) */
@@ -79,6 +114,13 @@ export function milestonesReached(board) {
   if (board.state !== 'playing') return 0;
   const p = progress(board);
   return MILESTONES.filter((m) => p >= m).length;
+}
+
+/** 천둥번개: 고른 뒤 66% 단계(마지막 능력)에 닿기 전까지 어둡다 */
+export function isDark(abilities, board) {
+  if (!abilities?.picks?.includes('thunder') || !board) return false;
+  if ((abilities.granted ?? 0) >= MILESTONES.length) return false; // 66% 능력을 받았으면 끝
+  return board.state === 'playing' && progress(board) < MILESTONES[MILESTONES.length - 1];
 }
 
 /** 이 판에서 key 를 받으면 늘어나는 횟수 (핵전쟁 뒤에는 2배) */
@@ -287,4 +329,74 @@ export function sink(board, cells) {
     }
   }
   return settle(board);
+}
+
+/* ---------- 소나 ---------- */
+
+const STEPS = { up: [-1, 0], down: [1, 0], left: [0, -1], right: [0, 1] };
+
+/** 칸 a 에서 b 쪽 방향 (가로·세로 중 더 많이 움직인 쪽, 동서는 가까운 쪽으로 돈다). 같은 칸이면 null */
+export function sonarDir(cols, a, b) {
+  const dy = Math.floor(b / cols) - Math.floor(a / cols);
+  let dx = (b % cols) - (a % cols);
+  dx = ((dx % cols) + cols + Math.floor(cols / 2)) % cols - Math.floor(cols / 2);
+  if (dx === 0 && dy === 0) return null;
+  if (Math.abs(dx) >= Math.abs(dy)) return dx > 0 ? 'right' : 'left';
+  return dy > 0 ? 'down' : 'up';
+}
+
+/** i 부터 dir 쪽으로 이어지는 바다 칸 (육지·지도 끝에서 멈춤, 한 바퀴를 넘지 않음) */
+export function sonarLine(board, i, dir, max = board.cols) {
+  const [dr, dc] = STEPS[dir];
+  const { cols, rows } = board;
+  let r = Math.floor(i / cols);
+  let c = i % cols;
+  const out = [];
+  while (out.length < max && r >= 0 && r < rows) {
+    const n = r * cols + c;
+    if (!board.ocean[n]) break;
+    out.push(n);
+    r += dr;
+    c = (c + dc + cols) % cols;
+  }
+  return out;
+}
+
+/**
+ * 소나: 줄을 따라 안전한 칸은 열고 첫 지뢰에 깃발을 꽂고 멈춘다.
+ * 결과: { outcome: 'none'|'done'|'won', hit: 지뢰 칸 또는 -1, end: 마지막으로 닿은 칸 }
+ */
+export function sonar(board, i, dir) {
+  if (!isLive(board) || !board.ocean[i]) return { outcome: 'none', hit: -1, end: i };
+  let changed = false;
+  let end = i;
+  for (const n of sonarLine(board, i, dir)) {
+    end = n;
+    if (board.mine[n]) {
+      if (!board.flag[n]) {
+        toggleFlag(board, n);
+        changed = true;
+      }
+      return { outcome: changed ? 'done' : 'none', hit: n, end };
+    }
+    if (board.open[n]) continue;
+    changed = true;
+    if (openSafe(board, n) === 'won') return { outcome: 'won', hit: -1, end };
+  }
+  return { outcome: changed ? 'done' : 'none', hit: -1, end };
+}
+
+/* ---------- 상어토네이도 ---------- */
+
+/** 열린 칸을 다시 덮는다. 덮은 칸 수를 돌려준다 */
+export function hideCells(board, cells) {
+  if (!isLive(board)) return 0;
+  let n = 0;
+  for (const i of cells) {
+    if (!board.open[i]) continue;
+    board.open[i] = 0;
+    board.opened -= 1;
+    n += 1;
+  }
+  return n;
 }

@@ -15,8 +15,9 @@ function el(tag, cls, text) {
  * @param {Array<{key:string,uses:number}>} inv
  * @param {string|null} aiming 지금 대상을 고르는 능력
  * @param {(key:string) => void} onUse
+ * @param {boolean} photoHeld 사진으로 찍어 둔 판이 있는지 (횟수를 다 써도 사진은 남아 있다)
  */
-export function renderAbilityBar(bar, inv, aiming, onUse) {
+export function renderAbilityBar(bar, inv, aiming, onUse, photoHeld = false) {
   bar.replaceChildren();
   inv.forEach((a, idx) => {
     const def = ABILITIES[a.key];
@@ -31,7 +32,13 @@ export function renderAbilityBar(bar, inv, aiming, onUse) {
     btn.addEventListener('click', (e) => { onUse(a.key); e.currentTarget.blur(); });
     bar.append(btn);
   });
-  bar.hidden = inv.length === 0;
+  if (photoHeld) {
+    const chip = el('span', 'ability passive photo-held');
+    chip.title = '지뢰가 터지면 찍은 때로 돌아갑니다';
+    chip.append(el('span', 'ab-icon', '📸'), el('span', 'ab-name', '사진 있음'));
+    bar.append(chip);
+  }
+  bar.hidden = inv.length === 0 && !photoHeld;
 }
 
 /**
