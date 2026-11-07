@@ -213,8 +213,8 @@ test('후보: 국국가가·핵전쟁은 첫 고르기에만, 였던것은 진 �
 });
 
 test('핵전쟁 뒤에 받는 능력은 횟수가 2배', () => {
-  assert.equal(gainOf('probe', []), 5);
-  assert.equal(gainOf('probe', ['nuke', 'probe']), 10);
+  assert.equal(gainOf('probe', [], 'extreme'), 5);
+  assert.equal(gainOf('probe', ['nuke', 'probe'], 'extreme'), 10);
   assert.ok(SLOT_KEYS.every((k) => ABILITIES[k].kind === 'slot'));
   assert.deepEqual(normalizeInventory([{ key: 'nuke', uses: 1 }]), []);
 });

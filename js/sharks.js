@@ -1,9 +1,9 @@
-// 상어토네이도: 바다를 돌아다니는 상어. 위치는 칸 단위 좌표(x: 열, y: 행, 칸 가운데가 .5).
+// 상어 떼: 바다를 헤엄쳐 다니는 상어. 위치는 칸 단위 좌표(x: 열, y: 행, 칸 가운데가 .5).
 // 화면과 무관한 순수 함수. 상어 배열은 매번 새로 만들어 돌려준다.
 
 export const SHARK_PER_CELLS = 1500; // 바다 이 칸 수마다 상어 한 마리
 export const SHARK_SPEED = 1.6; // 초당 칸
-const TURN_CHANCE = 0.4; // 초당 방향을 트는 확률
+const WANDER = 2.4; // 헤엄치며 조금씩 방향을 트는 정도 (초당 라디안 폭)
 const TRIES = 8;
 
 const cellOf = (board, x, y) => {
@@ -41,7 +41,7 @@ export function spawnSharks(board, count, rng = Math.random) {
 export function stepSharks(sharks, board, dt, rng = Math.random) {
   const step = SHARK_SPEED * dt;
   return sharks.map((s) => {
-    let a = rng() < TURN_CHANCE * dt ? s.a + (rng() - 0.5) * Math.PI : s.a;
+    let a = s.a + (rng() - 0.5) * WANDER * dt;
     for (let k = 0; k < TRIES; k += 1) {
       const x = s.x + Math.cos(a) * step;
       const y = s.y + Math.sin(a) * step;

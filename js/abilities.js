@@ -1,11 +1,11 @@
 // 능력 모드: 찍어야 하는 상황(운)을 능력으로 푼다.
-// 능력을 더하거나 횟수를 바꿀 때는 ABILITIES 표만 고치면 된다.
+// 능력을 더하거나 횟수를 바꿀 때는 ABILITIES 표만 고치면 된다 (uses = 최고 난이도 횟수, 다른 난이도는 usesFor 가 줄인다).
 // kind: slot(능력 칸에 들어가 횟수만큼 쓰기) | event(고르는 순간 한 번 일어나고 끝)
 // target: cell(칸 하나) | area(3×3) | pair(칸 두 개) | count(5×5 세기) | circle(반지름 10 원)
 //         | instant(누르면 바로) | passive(가지고 있으면 자동)
 // firstOnly: 첫 고르기에만 나온다
 
-import { reveal, toggleFlag, forEachGridNeighbor, oceanNeighbors, progress, settle } from './game.js';
+import { LEVELS, reveal, toggleFlag, forEachGridNeighbor, oceanNeighbors, progress, settle } from './game.js';
 
 export const ABILITIES = {
   probe: { name: '탐지', icon: '🔍', uses: 5, kind: 'slot', target: 'cell', desc: '고른 칸이 지뢰면 깃발, 아니면 열기' },
@@ -49,7 +49,7 @@ export const ABILITIES = {
     desc: '페르시아만과 오만만을 모두 풀기',
   },
   sharknado: {
-    name: '상어토네이도', icon: '🦈', kind: 'event', firstOnly: true,
+    name: '상어 떼', icon: '🦈', kind: 'event', firstOnly: true,
     desc: '바다 곳곳에 상어가 돌아다님. 마우스나 누른 곳이 상어에 닿으면 엉뚱한 곳으로 날아가고 연 칸 일부가 다시 덮임',
   },
   thunder: {
@@ -123,9 +123,17 @@ export function isDark(abilities, board) {
   return board.state === 'playing' && progress(board) < MILESTONES[MILESTONES.length - 1];
 }
 
-/** 이 판에서 key 를 받으면 늘어나는 횟수 (핵전쟁 뒤에는 2배) */
-export function gainOf(key, picks) {
-  return ABILITIES[key].uses * (picks.includes('nuke') ? 2 : 1);
+/** ABILITIES 의 uses 는 최고 난이도 값. 다른 난이도는 판 폭(열 수)에 비례해 줄이고 적어도 1회 */
+const BASE_COLS = LEVELS.extreme.cols;
+
+export function usesFor(key, level = 'extreme') {
+  const cols = LEVELS[level]?.cols ?? BASE_COLS;
+  return Math.max(1, Math.round((ABILITIES[key].uses * cols) / BASE_COLS));
+}
+
+/** 이 판에서 key 를 받으면 늘어나는 횟수 (난이도별, 핵전쟁 뒤에는 2배) */
+export function gainOf(key, picks, level = 'extreme') {
+  return usesFor(key, level) * (picks.includes('nuke') ? 2 : 1);
 }
 
 /* ---------- 보관함: [{ key, uses }] 받은 순서대로. 항상 새 배열을 돌려준다 ---------- */
@@ -386,7 +394,7 @@ export function sonar(board, i, dir) {
   return { outcome: changed ? 'done' : 'none', hit: -1, end };
 }
 
-/* ---------- 상어토네이도 ---------- */
+/* ---------- 상어 떼 ---------- */
 
 /** 열린 칸을 다시 덮는다. 덮은 칸 수를 돌려준다 */
 export function hideCells(board, cells) {

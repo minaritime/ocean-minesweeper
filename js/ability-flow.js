@@ -75,7 +75,7 @@ export function createAbilityFlow(host) {
     state.aiming = null;
     host.pauseClock();
     $('offerStage').textContent = stageLabel();
-    renderOffer($('offerList'), offer, pickAbility, (key) => gainOf(key, state.abilities.picks));
+    renderOffer($('offerList'), offer, pickAbility, (key) => gainOf(key, state.abilities.picks, state.level));
     $('offer').classList.add('show');
     $('offerList').querySelector('button')?.focus();
     host.scheduleSave();
@@ -87,7 +87,7 @@ export function createAbilityFlow(host) {
     const [key] = offerChoices(Math.random, pool, 1);
     const a = state.abilities;
     const picks = [...a.picks, key];
-    setAbilities({ inv: addAbility(a.inv, key, gainOf(key, picks)), granted: a.granted + 1, offer: null, picks });
+    setAbilities({ inv: addAbility(a.inv, key, gainOf(key, picks, state.level)), granted: a.granted + 1, offer: null, picks });
     host.showToast(`${ABILITIES[key].icon} ${ABILITIES[key].name} 자동 선택`, 'info');
     host.scheduleSave();
     host.refresh();
@@ -104,7 +104,7 @@ export function createAbilityFlow(host) {
       runEvent(key);
       return;
     }
-    setAbilities({ inv: addAbility(a.inv, key, gainOf(key, picks)), granted: a.granted + 1, offer: null, picks });
+    setAbilities({ inv: addAbility(a.inv, key, gainOf(key, picks, state.level)), granted: a.granted + 1, offer: null, picks });
     host.resumeClock();
     host.scheduleSave();
     host.refresh();
@@ -148,7 +148,7 @@ export function createAbilityFlow(host) {
     }
     if (key === 'sharknado') {
       host.hazards.sync();
-      effects.add({ kind: 'screen', ms: 1300, icon: '🦈', text: '상어토네이도', color: '#37474f' });
+      effects.add({ kind: 'screen', ms: 1300, icon: '🦈', text: '상어 떼', color: '#0d3b66' });
       host.afterMove('none');
       return;
     }

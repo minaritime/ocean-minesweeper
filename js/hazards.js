@@ -1,4 +1,4 @@
-// 계속 움직이는 능력·사건: 상어토네이도, 레이더, 천둥번개(어둠과 번개).
+// 계속 움직이는 능력·사건: 상어 떼, 레이더, 천둥번개(어둠과 번개).
 // 매 프레임 draw() 가 시간을 흘리고 그린다. 시계가 멈춘 동안은 함께 멈춘다.
 
 import { isDark } from './abilities.js';
@@ -68,7 +68,7 @@ export function createHazards(host) {
     wasDark = false;
   }
 
-  /** 상어토네이도를 고른 판이면 상어를 풀어 놓는다 (새 판·이어하기·판 바뀜 뒤) */
+  /** 상어 떼를 고른 판이면 상어를 풀어 놓는다 (새 판·이어하기·판 바뀜 뒤) */
   function sync() {
     const b = board();
     const on = state.mode === 'ability' && state.abilities.picks.includes('sharknado') && b;
@@ -153,6 +153,27 @@ export function createHazards(host) {
     return sx;
   }
 
+  /** 상어 뒤로 퍼지는 물결 (헤엄친 쪽 반대로 V자) */
+  function drawWake(ctx, sx, sy, s, size) {
+    const bx = -Math.cos(s.a);
+    const by = -Math.sin(s.a);
+    ctx.strokeStyle = 'rgba(235, 248, 255, 0.55)';
+    ctx.lineWidth = Math.max(1, size * 0.05);
+    for (let k = 1; k <= 3; k += 1) {
+      const d = size * (0.35 + k * 0.22);
+      const spread = size * 0.12 * k;
+      const cx = sx + bx * d;
+      const cy = sy + by * d;
+      ctx.globalAlpha = 0.9 - k * 0.25;
+      ctx.beginPath();
+      ctx.moveTo(cx - by * spread, cy + bx * spread);
+      ctx.lineTo(cx + bx * size * 0.1, cy + by * size * 0.1);
+      ctx.lineTo(cx + by * spread, cy - bx * spread);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
   function drawSharks(ctx, view) {
     const size = Math.max(SHARK_MIN_PX, view.z * SHARK_DRAW_CELLS);
     ctx.save();
@@ -163,16 +184,18 @@ export function createHazards(host) {
       const sx = toScreenX(view, s.x);
       const sy = view.panY + s.y * view.z;
       if (sx < -size || sx > view.w + size || sy < -size || sy > view.h + size) continue;
-      ctx.strokeStyle = 'rgba(210, 225, 235, 0.55)';
-      ctx.lineWidth = Math.max(1.5, size * 0.06);
-      for (let k = 0; k < 3; k += 1) {
-        ctx.beginPath();
-        ctx.arc(sx, sy, size * (0.35 + k * 0.12), s.spin + k * 2, s.spin + k * 2 + Math.PI * 1.1);
-        ctx.stroke();
-      }
+      drawWake(ctx, sx, sy, s, size);
+      // 그림 글자 🦈 는 왼쪽을 본다: 오른쪽으로 갈 때는 뒤집고, 위아래로 갈 때는 기울인다
+      const right = Math.cos(s.a) > 0;
+      const tilt = Math.atan2(Math.sin(s.a), Math.abs(Math.cos(s.a))) * 0.6;
       ctx.save();
       ctx.translate(sx, sy);
-      ctx.rotate(Math.sin(s.spin) * 0.35);
+      ctx.scale(right ? -1 : 1, 1);
+      ctx.rotate((right ? -tilt : tilt) + Math.sin(s.spin * 1.5) * 0.06);
+      ctx.fillStyle = 'rgba(4, 30, 50, 0.28)';
+      ctx.beginPath();
+      ctx.ellipse(0, size * 0.28, size * 0.45, size * 0.12, 0, 0, Math.PI * 2);
+      ctx.fill();
       ctx.fillText('🦈', 0, 0);
       ctx.restore();
     }
