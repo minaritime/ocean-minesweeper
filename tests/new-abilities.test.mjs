@@ -208,16 +208,16 @@ test('호르무즈: 페르시아만·오만만 바다만, 아라비아해는 빼
 
 /* ---------- 난이도별 횟수 ---------- */
 
-test('능력 횟수는 판 폭에 비례하고, 최고 난이도가 표의 값이다', async () => {
+test('능력 횟수는 판 폭에 비례하고, 쉬움이 표의 값이다 (1회짜리는 고정)', async () => {
   const { gainOf } = await import('../js/abilities.js');
   const table = {
-    probe: [2, 3, 4, 5], scan: [1, 2, 2, 3], shield: [4, 6, 8, 10], quantum: [2, 3, 4, 5], count: [2, 2, 3, 4],
-    thorns: [2, 3, 4, 5], coast: [1, 1, 1, 1], atlantis: [1, 1, 2, 2], sonar: [11, 17, 23, 30], photo: [1, 2, 2, 3],
-    radar: [6, 8, 11, 15],
+    probe: [5, 8, 10, 13], scan: [3, 5, 6, 8], shield: [10, 15, 20, 27], quantum: [5, 8, 10, 13], count: [4, 6, 8, 11],
+    thorns: [5, 8, 10, 13], coast: [1, 1, 1, 1], atlantis: [2, 3, 4, 5], sonar: [30, 45, 60, 80], photo: [3, 5, 6, 8],
+    radar: [15, 23, 30, 40],
   };
   const levels = ['easy', 'normal', 'hard', 'extreme'];
   for (const [key, want] of Object.entries(table)) {
     assert.deepEqual(levels.map((lv) => gainOf(key, [], lv)), want, key);
   }
-  assert.equal(gainOf('sonar', ['nuke'], 'easy'), 22, '핵전쟁 뒤에는 난이도 값의 2배');
+  assert.equal(gainOf('sonar', ['nuke'], 'normal'), 90, '핵전쟁 뒤에는 난이도 값의 2배');
 });

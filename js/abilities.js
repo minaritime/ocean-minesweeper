@@ -1,5 +1,5 @@
 // 능력 모드: 찍어야 하는 상황(운)을 능력으로 푼다.
-// 능력을 더하거나 횟수를 바꿀 때는 ABILITIES 표만 고치면 된다 (uses = 최고 난이도 횟수, 다른 난이도는 usesFor 가 줄인다).
+// 능력을 더하거나 횟수를 바꿀 때는 ABILITIES 표만 고치면 된다 (uses = 쉬움 횟수, 다른 난이도는 usesFor 가 판 폭에 비례해 늘린다).
 // kind: slot(능력 칸에 들어가 횟수만큼 쓰기) | event(고르는 순간 한 번 일어나고 끝)
 // target: cell(칸 하나) | area(3×3) | pair(칸 두 개) | count(5×5 세기) | circle(반지름 10 원)
 //         | instant(누르면 바로) | passive(가지고 있으면 자동)
@@ -126,16 +126,18 @@ export function isDark(abilities, board) {
   return board.state === 'playing' && progress(board) < DARK_UNTIL;
 }
 
-/** ABILITIES 의 uses 는 최고 난이도 값. 다른 난이도는 판 폭(열 수)에 비례해 줄이고 적어도 1회 */
-const BASE_COLS = LEVELS.extreme.cols;
+/** ABILITIES 의 uses 는 쉬움 값. 다른 난이도는 판 폭(열 수)에 비례해 늘린다. 1회짜리(영해)는 언제나 1회 */
+const BASE_COLS = LEVELS.easy.cols;
 
-export function usesFor(key, level = 'extreme') {
+export function usesFor(key, level = 'easy') {
+  const { uses } = ABILITIES[key];
+  if (uses <= 1) return 1;
   const cols = LEVELS[level]?.cols ?? BASE_COLS;
-  return Math.max(1, Math.round((ABILITIES[key].uses * cols) / BASE_COLS));
+  return Math.max(1, Math.round((uses * cols) / BASE_COLS));
 }
 
 /** 이 판에서 key 를 받으면 늘어나는 횟수 (난이도별, 핵전쟁 뒤에는 2배) */
-export function gainOf(key, picks, level = 'extreme') {
+export function gainOf(key, picks, level = 'easy') {
   return usesFor(key, level) * (picks.includes('nuke') ? 2 : 1);
 }
 
