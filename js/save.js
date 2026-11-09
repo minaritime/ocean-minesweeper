@@ -27,7 +27,7 @@ export function snapshot({ mode = 'basic', abilities = emptyAbilities(), level, 
     mode,
     abilities: {
       inv: abilities.inv, granted: abilities.granted, offer: abilities.offer, picks: abilities.picks,
-      look: abilities.look, counts: abilities.counts, photo: abilities.photo ?? null,
+      look: abilities.look, counts: abilities.counts, photo: abilities.photo ?? null, steps: MILESTONES.length,
     },
     level,
     layout: { cols: layout.cols, rows: layout.rows, cellDeg: layout.cellDeg, rot: layout.rot, latTop: layout.latTop },
@@ -52,9 +52,19 @@ const isCount = (c) => c && Number.isInteger(c.i) && c.i >= 0 && Number.isIntege
 
 const isAbilityList = (x) => Array.isArray(x) && x.length > 0 && x.every((k) => typeof k === 'string' && ABILITIES[k]);
 
+/** 능력을 3번 받던 때(steps 없음)의 받은 단계 → 지금 단계 (첫 칸 1, 33% 3, 66% 5) */
+const OLD_THREE_STEPS = [0, 1, 3, 5];
+
+function grantedOf(raw) {
+  if (!Number.isInteger(raw.granted)) return 0;
+  const g = Math.max(0, raw.granted);
+  const now = raw.steps === undefined ? (OLD_THREE_STEPS[g] ?? MILESTONES.length) : g;
+  return Math.min(MILESTONES.length, now);
+}
+
 function restoreAbilities(raw) {
   if (!raw || typeof raw !== 'object') return emptyAbilities();
-  const granted = Number.isInteger(raw.granted) ? Math.min(MILESTONES.length, Math.max(0, raw.granted)) : 0;
+  const granted = grantedOf(raw);
   return {
     inv: normalizeInventory(raw.inv),
     granted,

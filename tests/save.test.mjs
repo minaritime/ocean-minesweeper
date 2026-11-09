@@ -123,3 +123,23 @@ test('였던것: 진 판을 되살리면 밟은 지뢰에 깃발이 꽂혀 이�
   assert.equal(restoreLost({ ...data, exploded: back.board.ocean.findIndex((o, i) => o && !back.board.mine[i]) }), null);
   assert.equal(restoreLost(null), null);
 });
+
+test('3번 받던 때의 저장은 받은 단계를 6번 기준으로 바꿔 읽는다 (건너뛰지 않게)', () => {
+  const b = playedBoard(LEVELS.easy.cols, 12);
+  const base = snapshot({
+    mode: 'ability', level: 'easy', layout: easyLayout(12), board: b, elapsed: 5, view: viewOf, savedAt: 1,
+    abilities: { inv: [], granted: 0, offer: null, picks: [], look: 'sea', counts: [] },
+  });
+  const old = (granted) => {
+    const data = JSON.parse(JSON.stringify(base));
+    data.abilities.granted = granted;
+    delete data.abilities.steps; // 옛 저장에는 단계 수가 없다
+    return restore(data).abilities.granted;
+  };
+  // 옛 단계: 0 시작 전, 1 첫 칸, 2 = 33%, 3 = 66%  →  새 단계: 첫 칸 1, 33% 3, 66% 5
+  assert.deepEqual([0, 1, 2, 3].map(old), [0, 1, 3, 5]);
+  // 새 저장은 그대로
+  const now = JSON.parse(JSON.stringify(base));
+  now.abilities.granted = 2;
+  assert.equal(restore(now).abilities.granted, 2);
+});
