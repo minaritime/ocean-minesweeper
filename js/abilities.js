@@ -33,7 +33,7 @@ export const ABILITIES = {
   },
   unfair: { name: '억까 ㄴ', icon: '🙅', kind: 'event', desc: '주변 바다가 2칸 이하인 막다른 칸을 모두 풀기' },
   sonar: {
-    name: '소나', icon: '🔊', uses: 30, kind: 'slot', target: 'line',
+    name: '소나', icon: '🔊', uses: 15, kind: 'slot', target: 'line',
     desc: '칸을 고르고 방향을 고르면 그쪽으로 음파를 쏴 첫 지뢰까지 열고 깃발',
   },
   photo: {
