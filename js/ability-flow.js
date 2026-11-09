@@ -53,7 +53,7 @@ export function createAbilityFlow(host) {
     const a = state.abilities;
     if (a.granted === 0 && a.picks.includes('nuke')) return '☢️ 한 번 더';
     const stage = MILESTONES[a.granted];
-    return stage === 0 ? '첫 능력' : `찾아낸 바다 ${Math.floor(stage * 100)}% 달성`;
+    return stage === 0 ? '첫 능력' : `찾아낸 바다 ${Math.round(stage * 100)}% 달성`;
   }
 
   function offerPool() {

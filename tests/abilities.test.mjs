@@ -52,21 +52,22 @@ test('후보가 모자라면 있는 만큼만 준다', () => {
   assert.deepEqual(offerChoices(seeded(1), ['probe']), ['probe']);
 });
 
-test('받는 단계: 시작 전 0, 첫 칸 뒤 1, 33% 2, 66% 3', () => {
-  assert.deepEqual(MILESTONES, [0, 1 / 3, 2 / 3]);
-  const ocean = new Uint8Array(30).fill(1);
-  const b = createBoard(ocean, 10, 3, 0);
+test('받는 단계: 첫 칸 뒤, 그리고 찾아낸 바다 1/6마다 (모두 6번)', () => {
+  assert.deepEqual(MILESTONES, [0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6]);
+  const ocean = new Uint8Array(60).fill(1);
+  const b = createBoard(ocean, 10, 6, 0);
   b.mineCount = 0;
   assert.equal(milestonesReached(b), 0);
   b.state = 'playing';
-  const total = 30;
   const at = (n) => { b.opened = n; return milestonesReached(b); };
   assert.equal(at(1), 1);
   assert.equal(at(9), 1);
-  assert.equal(at(10), 2); // 정확히 1/3
-  assert.equal(at(19), 2);
-  assert.equal(at(20), 3); // 정확히 2/3
-  assert.equal(at(total - 1), 3);
+  assert.equal(at(10), 2); // 정확히 1/6
+  assert.equal(at(30), 4); // 정확히 1/2
+  assert.equal(at(40), 5); // 정확히 2/3
+  assert.equal(at(49), 5);
+  assert.equal(at(50), 6); // 정확히 5/6
+  assert.equal(at(59), 6);
 });
 
 test('끝난 판에서는 더 받지 않는다', () => {

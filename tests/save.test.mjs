@@ -104,7 +104,7 @@ test('능력 저장값이 망가졌으면 걸러 읽는다', () => {
     abilities: { inv: [{ key: 'x', uses: 1 }], granted: 99, offer: ['nope'], picks: 'bad', look: 'moon', counts: [{ i: -1, n: 2 }, 'x'] },
   });
   const back = restore(data);
-  assert.deepEqual(back.abilities, { inv: [], granted: 3, offer: null, picks: [], look: 'sea', counts: [], photo: null });
+  assert.deepEqual(back.abilities, { inv: [], granted: 6, offer: null, picks: [], look: 'sea', counts: [], photo: null });
   assert.equal(restore({ ...data, mode: 'weird' }), null);
 });
 

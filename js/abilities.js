@@ -64,8 +64,11 @@ export const SLOT_KEYS = ABILITY_KEYS.filter((k) => ABILITIES[k].kind === 'slot'
 /** 지도 모양: sea(바다에서) | land(국국가가, 대륙에서) | nuke(핵전쟁, 대륙 없음) */
 export const LOOKS = ['sea', 'land', 'nuke'];
 
-/** 첫 칸을 연 뒤, 33%, 66% 에 하나씩 */
-export const MILESTONES = [0, 1 / 3, 2 / 3];
+/** 첫 칸을 연 뒤, 그리고 찾아낸 바다 17%·33%·50%·67%·83% 에 하나씩 (모두 6번) */
+export const MILESTONES = [0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6];
+/** 천둥번개 어둠이 끝나는 진행 (66%). 그 단계 능력을 받았으면 진행이 다시 줄어도 밝다 */
+export const DARK_UNTIL = 4 / 6;
+const DARK_STAGE = MILESTONES.filter((m) => m <= DARK_UNTIL).length;
 export const OFFER_SIZE = 3;
 export const COUNT_RADIUS = 2; // 세기: 5×5
 export const ATLANTIS_RADIUS = 10;
@@ -116,11 +119,11 @@ export function milestonesReached(board) {
   return MILESTONES.filter((m) => p >= m).length;
 }
 
-/** 천둥번개: 고른 뒤 66% 단계(마지막 능력)에 닿기 전까지 어둡다 */
+/** 천둥번개: 고른 뒤 66% 단계에 닿기 전까지 어둡다 */
 export function isDark(abilities, board) {
   if (!abilities?.picks?.includes('thunder') || !board) return false;
-  if ((abilities.granted ?? 0) >= MILESTONES.length) return false; // 66% 능력을 받았으면 끝
-  return board.state === 'playing' && progress(board) < MILESTONES[MILESTONES.length - 1];
+  if ((abilities.granted ?? 0) >= DARK_STAGE) return false; // 66% 능력을 받았으면 끝
+  return board.state === 'playing' && progress(board) < DARK_UNTIL;
 }
 
 /** ABILITIES 의 uses 는 최고 난이도 값. 다른 난이도는 판 폭(열 수)에 비례해 줄이고 적어도 1회 */

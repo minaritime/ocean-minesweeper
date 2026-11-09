@@ -154,7 +154,8 @@ test('천둥번개는 66% 단계에 닿기 전까지 어둡다', () => {
   b.opened = 0;
   assert.equal(isDark({ picks: ['probe'] }, b), false);
   // 66% 능력을 이미 받았으면 상어 등으로 진행이 줄어도 다시 어두워지지 않는다
-  assert.equal(isDark({ picks: ['thunder'], granted: 3 }, b), false);
+  assert.equal(isDark({ picks: ['thunder'], granted: 5 }, b), false);
+  assert.equal(isDark({ picks: ['thunder'], granted: 4 }, b), true);
 });
 
 test('다시 덮기: 열린 칸만 덮고 연 칸 수를 줄인다', () => {
