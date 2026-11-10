@@ -27,7 +27,7 @@ const mod = (a, n) => ((a % n) + n) % n;
  *   state, $, effects, afterMove(outcome), refresh(), pauseClock(), resumeClock(), scheduleSave(),
  *   showToast(text, kind), swapBoard(board, look), showWorld(), landMask(), density(),
  *   readLost(), clearLost(), installLost(lost, abilities),
- *   hazards, centerOn(x, y), flyTo(x, y, z, ms), showMeme(), minPlayPx
+ *   hazards, centerOn(x, y), flyTo(x, y, z, ms), showMeme(key), minPlayPx
  */
 export function createAbilityFlow(host) {
   const { state, $, effects } = host;
@@ -134,7 +134,8 @@ export function createAbilityFlow(host) {
     if (key === 'continent') {
       const b = board();
       host.swapBoard(landBoard(host.landMask(), b.cols, b.rows, host.density()), 'land');
-      effects.add({ kind: 'screen', ms: 1300, icon: '🌏', text: '국국가가', color: '#558b2f' });
+      host.showMeme('continent');
+      effects.add({ kind: 'screen', ms: 1300, icon: '', text: '', color: '#558b2f' });
       host.afterMove('opened');
       return;
     }
@@ -190,7 +191,7 @@ export function createAbilityFlow(host) {
       return [mod(x, layout.cols), y];
     };
     state.busy = true;
-    host.showMeme();
+    host.showMeme('hormuz');
     const [cx, cy] = at(GULF_CENTER);
     const fitZ = state.view.w / (HORMUZ_SPAN_DEG / layout.cellDeg);
     host.flyTo(cx, cy, Math.min(HORMUZ_MAX_PX, Math.max(host.minPlayPx * 1.5, fitZ)), HORMUZ.fly);

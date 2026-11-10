@@ -13,6 +13,7 @@ import { buildStart, renderStart } from './start-ui.js';
 import { createAwayPause } from './away-pause.js';
 import { createView, MIN_PLAY_PX } from './view.js';
 import { createHazards } from './hazards.js';
+import { createMemes } from './memes.js';
 
 const LONG_PRESS_MS = 380;
 const DRAG_THRESHOLD = 7;
@@ -26,7 +27,6 @@ const LOST_KEY = 'world-minesweeper-lost'; // 마지막으로 진 판 (였던것
 const SAVE_DELAY_MS = 800;
 const TOAST_MS = 3200;
 const CONFIRM_RESTART_AFTER_SEC = 60;
-const MEME_MS = 2600;
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('board');
@@ -75,6 +75,8 @@ const state = {
 const {
   clampView, resizeCanvas, fitView, zoomAt, cellAt, pointToGrid, centerOn, flyTo,
 } = createView({ state, canvas, requestRender });
+
+const memes = createMemes($('meme'));
 
 const hazards = createHazards({
   state,
@@ -467,7 +469,7 @@ const flow = createAbilityFlow({
   hazards,
   centerOn: (x, y) => centerOn(x, y),
   flyTo,
-  showMeme,
+  showMeme: (key) => memes.show(key),
   minPlayPx: MIN_PLAY_PX,
   landMask: () => buildOceanMask(state.polygons, state.game.layout).map((v) => (v ? 0 : 1)),
   density: () => LEVELS[state.level].density,
@@ -686,18 +688,6 @@ function bindRadarHandle() {
   });
   handle.addEventListener('pointermove', (e) => { if (handle.hasPointerCapture(e.pointerId)) move(e); });
   handle.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
-}
-
-/** 호르무즈 봉쇄 짤: 그림(img/hormuz.jpg)이 있으면 그림, 없으면 이모지 */
-function showMeme() {
-  const el = $('meme');
-  const img = $('memeImg');
-  el.classList.toggle('has-img', img.complete && img.naturalWidth > 0);
-  el.classList.remove('show');
-  void el.offsetWidth; // 연출을 처음부터 다시 시작한다
-  el.classList.add('show');
-  clearTimeout(el.hideTimer);
-  el.hideTimer = setTimeout(() => el.classList.remove('show'), MEME_MS);
 }
 
 function bindStart() {
