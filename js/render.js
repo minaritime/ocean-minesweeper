@@ -121,8 +121,9 @@ function drawCoast(ctx, view, game) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
-function drawFlag(ctx, x, y, s) {
-  ctx.fillStyle = COLORS.closed[0];
+/** bg: 닫힌 칸 바탕색 (바다판은 파랑, 국국가가는 대륙 초록) */
+function drawFlag(ctx, x, y, s, bg) {
+  ctx.fillStyle = bg;
   ctx.fillRect(x, y, s, s);
   ctx.fillStyle = COLORS.pole;
   ctx.fillRect(x + s * 0.3, y + s * 0.2, s * 0.08, s * 0.62);
@@ -136,8 +137,8 @@ function drawFlag(ctx, x, y, s) {
   ctx.fill();
 }
 
-function drawMine(ctx, x, y, s, exploded) {
-  ctx.fillStyle = exploded ? COLORS.exploded : COLORS.closed[0];
+function drawMine(ctx, x, y, s, exploded, bg) {
+  ctx.fillStyle = exploded ? COLORS.exploded : bg;
   ctx.fillRect(x, y, s, s);
   const cx = x + s / 2;
   const cy = y + s / 2;
@@ -171,8 +172,9 @@ function drawCross(ctx, x, y, s) {
   ctx.stroke();
 }
 
-function drawMarks(ctx, view, board) {
+function drawMarks(ctx, view, board, look) {
   const s = view.z;
+  const closed = look === 'land' ? COLORS.closedLand : COLORS.closed;
   if (s < MIN_DETAIL_PX) return;
   const { cols, rows } = board;
   const lost = board.state === 'lost';
@@ -195,10 +197,10 @@ function drawMarks(ctx, view, board) {
         ctx.fillStyle = NUMBER_COLORS[board.adj[i]];
         ctx.fillText(String(board.adj[i]), x + s / 2, y + s * 0.54);
       } else if (board.flag[i]) {
-        drawFlag(ctx, x, y, s);
+        drawFlag(ctx, x, y, s, closed[(r + c) & 1]);
         if (lost && !board.mine[i]) drawCross(ctx, x, y, s);
       } else if (lost && board.mine[i]) {
-        drawMine(ctx, x, y, s, i === board.exploded);
+        drawMine(ctx, x, y, s, i === board.exploded, closed[(r + c) & 1]);
       }
     }
   }
@@ -284,7 +286,7 @@ export function draw(ctx, view, game, hover, aim = null, counts = []) {
   if (!game) return;
   drawLayer(ctx, view, game);
   drawCoast(ctx, view, game);
-  drawMarks(ctx, view, game.board);
+  drawMarks(ctx, view, game.board, game.layer.look);
   if (counts.length) drawCounts(ctx, view, game.board, counts);
   if (aim) drawAim(ctx, view, game.board, aim);
   else drawHover(ctx, view, game.board, hover);
